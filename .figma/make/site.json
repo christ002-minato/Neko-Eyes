@@ -1,0 +1,10 @@
+{
+  "description": "Explore the solar system in 3D with an immersive web application designed for science enthusiasts, offering an elegant interface and interactive celestial navigation.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
