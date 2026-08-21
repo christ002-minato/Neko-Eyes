@@ -20,6 +20,7 @@ interface Planet {
   tempC: string
   description: string
   initialOffset: number
+  parentId?: string
 }
 
 interface Star {
@@ -50,6 +51,7 @@ const PLANETS: Planet[] = [
     type: 'Terrestrial', distanceAU: 0.39, moons: 0, tempC: '−180 / +430°C',
     description: 'Smallest planet. Extreme temperature swings, no atmosphere, heavily cratered surface.',
     initialOffset: 0.12,
+    parentId: 'sun',
   },
   {
     id: 'venus', name: 'Venus', radius: 2.5, orbitRadius: 40, period: 7.5,
@@ -57,6 +59,7 @@ const PLANETS: Planet[] = [
     type: 'Terrestrial', distanceAU: 0.72, moons: 0, tempC: '+465°C',
     description: 'Hottest planet. Dense CO₂ atmosphere with sulfuric acid clouds trapping heat.',
     initialOffset: 0.42,
+    parentId: 'sun',
   },
   {
     id: 'earth', name: 'Earth', radius: 2.8, orbitRadius: 55, period: 10,
@@ -64,6 +67,7 @@ const PLANETS: Planet[] = [
     type: 'Terrestrial', distanceAU: 1.00, moons: 1, tempC: '−89 / +58°C',
     description: 'The only confirmed harbor of life in the universe. Liquid water, breathable atmosphere.',
     initialOffset: 0.70,
+    parentId: 'sun',
   },
   {
     id: 'mars', name: 'Mars', radius: 2, orbitRadius: 70, period: 18.8,
@@ -71,6 +75,7 @@ const PLANETS: Planet[] = [
     type: 'Terrestrial', distanceAU: 1.52, moons: 2, tempC: '−125 / +20°C',
     description: 'Red planet home to Olympus Mons, the tallest volcano in the Solar System at 21 km.',
     initialOffset: 0.25,
+    parentId: 'sun',
   },
   {
     id: 'jupiter', name: 'Jupiter', radius: 6, orbitRadius: 95, period: 50,
@@ -78,6 +83,7 @@ const PLANETS: Planet[] = [
     type: 'Gas Giant', distanceAU: 5.20, moons: 95, tempC: '−110°C',
     description: 'Largest planet. The Great Red Spot is a storm raging continuously for over 350 years.',
     initialOffset: 0.58,
+    parentId: 'sun',
   },
   {
     id: 'saturn', name: 'Saturn', radius: 5, orbitRadius: 120, period: 120,
@@ -85,6 +91,7 @@ const PLANETS: Planet[] = [
     type: 'Gas Giant', distanceAU: 9.58, moons: 146, tempC: '−140°C',
     description: 'Iconic ring system spanning 280,000 km. Less dense than water.',
     initialOffset: 0.82,
+    parentId: 'sun',
   },
   {
     id: 'uranus', name: 'Uranus', radius: 3.5, orbitRadius: 145, period: 250,
@@ -92,6 +99,7 @@ const PLANETS: Planet[] = [
     type: 'Ice Giant', distanceAU: 19.22, moons: 28, tempC: '−224°C',
     description: 'Rotates on its side at 98°. Faint rings, blue-green methane atmosphere.',
     initialOffset: 0.35,
+    parentId: 'sun',
   },
   {
     id: 'neptune', name: 'Neptune', radius: 3.2, orbitRadius: 168, period: 500,
@@ -99,6 +107,7 @@ const PLANETS: Planet[] = [
     type: 'Ice Giant', distanceAU: 30.05, moons: 16, tempC: '−214°C',
     description: 'Strongest winds in the Solar System — 2,100 km/h. Has a Great Dark Spot storm.',
     initialOffset: 0.55,
+    parentId: 'sun',
   },
   {
     id: 'moon', name: 'The Moon', radius: 0.8, orbitRadius: 7, period: 2.7,
@@ -106,6 +115,7 @@ const PLANETS: Planet[] = [
     type: 'Natural Satellite', distanceAU: 0.00257, moons: 0, tempC: '−173 / +127°C',
     description: 'Earth\'s only natural satellite. Its gravitational pull creates tides on Earth.',
     initialOffset: 0,
+    parentId: 'earth',
   },
 ]
 
@@ -1235,6 +1245,16 @@ function ExplorerSection() {
   const handleTransitionDone = useCallback(() => {
     setIsFocusing(false)
   }, [])
+
+  // Focus automatique : quand un objet est sélectionné,
+  // appeler handleFocus pour lancer la transition caméra.
+  // On vérifie !isFocusing pour éviter de relancer une transition
+  // si le Focus est déjà actif (ex. bouton manuel).
+  useEffect(() => {
+    if (selectedPlanet && !isFocusing) {
+      handleFocus()
+    }
+  }, [selectedPlanet])
 
   return (
     <section id="explorer" className="relative h-screen overflow-hidden">
