@@ -22,6 +22,7 @@ export interface OrbitalBody {
   orbitalRadius: number
   orbitalPeriod: number
   phase: number
+  eccentricity?: number
   rotationPeriod?: number
   parent?: OrbitalBody
 }
@@ -34,6 +35,7 @@ export interface OrbitalBodyDefinition {
   orbitalRadius: number
   orbitalPeriod: number
   phase: number
+  eccentricity?: number
   rotationPeriod?: number
   parentId?: string
 }
