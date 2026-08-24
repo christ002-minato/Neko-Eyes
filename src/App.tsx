@@ -21,6 +21,9 @@ interface Planet {
   description: string
   initialOffset: number
   parentId?: string
+  eccentricity?: number
+  inclination?: number
+  nodeLongitude?: number
 }
 
 interface Star {
@@ -52,6 +55,9 @@ const PLANETS: Planet[] = [
     description: 'Smallest planet. Extreme temperature swings, no atmosphere, heavily cratered surface.',
     initialOffset: 0.12,
     parentId: 'sun',
+    eccentricity: 0.2056,
+    inclination: 7.005 * Math.PI / 180,  // degrees → radians
+    nodeLongitude: 48.331 * Math.PI / 180,  // degrees → radians
   },
   {
     id: 'venus', name: 'Venus', radius: 2.5, orbitRadius: 40, period: 7.5,
@@ -60,6 +66,9 @@ const PLANETS: Planet[] = [
     description: 'Hottest planet. Dense CO₂ atmosphere with sulfuric acid clouds trapping heat.',
     initialOffset: 0.42,
     parentId: 'sun',
+    eccentricity: 0.0068,
+    inclination: 3.395 * Math.PI / 180,
+    nodeLongitude: 76.679 * Math.PI / 180,
   },
   {
     id: 'earth', name: 'Earth', radius: 2.8, orbitRadius: 55, period: 10,
@@ -68,6 +77,9 @@ const PLANETS: Planet[] = [
     description: 'The only confirmed harbor of life in the universe. Liquid water, breathable atmosphere.',
     initialOffset: 0.70,
     parentId: 'sun',
+    eccentricity: 0.0167,
+    inclination: 0.00005 * Math.PI / 180,  // nearly coplanar
+    nodeLongitude: 0,
   },
   {
     id: 'mars', name: 'Mars', radius: 2, orbitRadius: 70, period: 18.8,
@@ -76,6 +88,9 @@ const PLANETS: Planet[] = [
     description: 'Red planet home to Olympus Mons, the tallest volcano in the Solar System at 21 km.',
     initialOffset: 0.25,
     parentId: 'sun',
+    eccentricity: 0.0934,
+    inclination: 1.85 * Math.PI / 180,
+    nodeLongitude: 49.558 * Math.PI / 180,
   },
   {
     id: 'jupiter', name: 'Jupiter', radius: 6, orbitRadius: 95, period: 50,
@@ -84,6 +99,9 @@ const PLANETS: Planet[] = [
     description: 'Largest planet. The Great Red Spot is a storm raging continuously for over 350 years.',
     initialOffset: 0.58,
     parentId: 'sun',
+    eccentricity: 0.0489,
+    inclination: 1.305 * Math.PI / 180,
+    nodeLongitude: 100.462 * Math.PI / 180,
   },
   {
     id: 'saturn', name: 'Saturn', radius: 5, orbitRadius: 120, period: 120,
@@ -92,6 +110,9 @@ const PLANETS: Planet[] = [
     description: 'Iconic ring system spanning 280,000 km. Less dense than water.',
     initialOffset: 0.82,
     parentId: 'sun',
+    eccentricity: 0.0555,
+    inclination: 2.484 * Math.PI / 180,
+    nodeLongitude: 122.364 * Math.PI / 180,
   },
   {
     id: 'uranus', name: 'Uranus', radius: 3.5, orbitRadius: 145, period: 250,
@@ -100,6 +121,9 @@ const PLANETS: Planet[] = [
     description: 'Rotates on its side at 98°. Faint rings, blue-green methane atmosphere.',
     initialOffset: 0.35,
     parentId: 'sun',
+    eccentricity: 0.0472,
+    inclination: 0.773 * Math.PI / 180,  // 98° axial tilt, but orbital inclination is small
+    nodeLongitude: 73.992 * Math.PI / 180,
   },
   {
     id: 'neptune', name: 'Neptune', radius: 3.2, orbitRadius: 168, period: 500,
@@ -108,6 +132,9 @@ const PLANETS: Planet[] = [
     description: 'Strongest winds in the Solar System — 2,100 km/h. Has a Great Dark Spot storm.',
     initialOffset: 0.55,
     parentId: 'sun',
+    eccentricity: 0.0086,
+    inclination: 1.77 * Math.PI / 180,
+    nodeLongitude: 131.721 * Math.PI / 180,
   },
   {
     id: 'moon', name: 'The Moon', radius: 0.8, orbitRadius: 7, period: 2.7,
@@ -116,6 +143,9 @@ const PLANETS: Planet[] = [
     description: 'Earth\'s only natural satellite. Its gravitational pull creates tides on Earth.',
     initialOffset: 0,
     parentId: 'earth',
+    eccentricity: 0.0549,
+    inclination: 5.145 * Math.PI / 180,
+    nodeLongitude: 0,
   },
 ]
 

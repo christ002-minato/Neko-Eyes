@@ -47,6 +47,49 @@
 - TypeScript et build passent
 - selftest orbital : 7/7 tests toujours validés
 
+## V0.9.1 — Excentricité orbitale
+
+- Modèle orbital képlérien simplifié dans `src/orbital/`
+- Paramètre optionnel `eccentricity` : 0 ou absent → orbite circulaire inchangée ; valeur > 0 → orbite elliptique via équation de Kepler
+- Calcul centralisé dans `getBodyPosition(body, simulationTime)` — aucune duplication dans React
+- Parité avec l'ancien modèle validée : 7/7 selftests passés
+- TypeScript et build passent sans erreur
+- AUCUNE planète ne change de trajectoire simplement parce que le nouveau système existe
+-HIérarchie Terre → Lune préservée
+- Soleil reste à l'origine
+
+## V0.9.2 — Inclinaison orbitale
+
+- Paramètre optionnel `inclination?` (en radians) ajouté aux types `OrbitalBody` / `OrbitalBodyDefinition`
+- `inclination = 0` → comportement coplanaire identique au modèle précédent
+- `inclination > 0` → orbite inclinée par rotation autour de l'axe X, position Y non nulle
+- Compatible avec orbites circulaires et elliptiques
+- Calcul centralisé dans `getBodyPosition()` — pas de duplication dans App.tsx
+- Hierarchie Terre → Lune préservée
+- Selftest : 7/7 tests validés
+
+
+
+## V0.9.4 — Activation orbitale
+
+- Paramètres orbitaux `eccentricity`, `inclination`, `nodeLongitude` appliqués aux 8 planètes et à la Lune dans `src/App.tsx`
+- Chaîne de branchement `PLANETS → defineOrbitalSystem() → getBodyPosition()` validée
+- Toutes les planètes utilisent maintenant le moteur orbital képlérien
+- Aucune planète ne change de trajectoire arbitrairement ; les valeurs par défaut (e=0, i=0, Ω=0) conservent le comportement circulaire précédent
+- TypeScript et build passent sans erreur
+- Build Vite réussi
+
+## V0.9.3 — Orientation des orbites
+
+- Paramètre optionnel `nodeLongitude?` (en radians) ajouté aux types `OrbitalBody` / `OrbitalBodyDefinition`
+- Correspond à la longitude du nœud montant (rotation autour de l'axe Z)
+- `nodeLongitude = 0` → comportement compatible avec les modèles précédents
+- `nodeLongitude ≠ 0` → orbite orientée dans l'espace tridimensionnel
+- Fonctionne en combinaison avec `inclination` et `eccentricity`
+- Calcul centralisé dans `getBodyPosition()` — pas de duplication dans App.tsx
+- Soleil reste statique à l'origine
+- HIérarchie parent → enfant préservée
+
 ---
 
-**Aucune fonctionnalités PLANNED n'est présentée comme implémentée.**
+**Aucune fonctionnalité PLANNED n'est présentée comme implémentée.**
