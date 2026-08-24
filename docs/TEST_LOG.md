@@ -255,3 +255,64 @@
 - ✅ Hiérarchie Soleil → Terre → Lune : position Lune = position Terre + offset lunaire (pas de double comptage)
 - ✅ Comparaison V0.9.4 vs JPL : Mercure, Vénus, Terre, Mars, Jupiter, Saturne, Uranus, Neptune
 - ✅ 27 tests ephemeris passés sur 27
+
+## V1.1.0 — Infrastructure rendu 3D
+
+- ✅ Répertoire `src/rendering/` créé
+- ✅ `src/rendering/index.ts` — exports vers modules rendering
+- ✅ `src/rendering/types.ts` — types `PlanetRenderData`, `SunRenderData`, `PlanetMaterialProps`, `PlanetRenderProps`, `SunRenderProps`
+- ✅ `src/rendering/planetMesh.ts` — `createPlanetMesh()`, `usePlanetRendering()`
+- ✅ `src/rendering/sunMesh.ts` — `createSunMesh()`
+- ✅ `tsc --noEmit` : aucune erreur
+- ✅ `npm run build` : réussite
+- ✅ `selftest orbital` : 7/7 tests validés
+- ✅ `selftest ephemeris` : 27/27 tests validés
+- ✅ Pas de nouvelles dépendances Three.js dans calculs orbitaux
+- ✅ Pas de création de matériaux par frame
+- ✅ Pas d'allocations dans useFrame
+- ✅ Conservation apparence actuelle
+- ✅ Toutes les planètes, Soleil, Lune fonctionnent en état précédent
+- ✅ Temps simulé : 0.1x/1x/5x/10x, passé/futur, pause
+- ✅ Sélection, Focus Camera, zoom automatique/manuel
+- ✅ Rotation caméra, damping préservés
+
+## V1.1.1 — Textures planétaires
+
+- ✅ Module `src/rendering/textureLoader.ts` créé avec `useTexture()`, `getMaterialConfig()`, `TEXTURE_PATHS`
+- ✅ Module `src/rendering/types.ts` créé avec types étendus `PlanetMaterialProps`, `PlanetRenderProps`, `SunRenderProps`
+- ✅ Module `src/rendering/planetMesh.ts` mis à jour avec support `bodyType` et `map` prop
+- ✅ Module `src/rendering/sunMesh.ts` créé pour abstraction Soleil
+- ✅ `Planet` component étendu avec prop `bodyType?: keyof typeof TEXTURE_PATHS`
+- ✅ Infrastructure de chargement : mise en cache unique, fallback en cas d'erreur
+- ✅ Configs de materialité par type de corps (roughness, metalness)
+- ✅ Aucun nouveau dépendance externe ; `THREE.TextureLoader` natif
+- ✅ Aucune allocation dans useFrame ; chargement au démarrage seulement
+- ✅ Apparence actuelle préservée ; textures en surcouche optionnelle
+- ✅ `tsc --noEmit` : aucune erreur
+- ✅ `npm run build` : réussite
+- ✅ `selftest orbital` : 7/7 tests validés
+- ✅ `selftest ephemeris` : 27/27 tests validés
+- ✅ Toutes les fonctionnalités verrouillées préservées
+
+## V1.1.2 — Éclairage + jour/nuit
+
+- ✅ `createSunLight()` : lumière directionnelle créé avec `THREE.DirectionalLight`
+- ✅ `isBodyIlluminated()` : détermination jour/nuit par corps par rapport au Soleil
+- ✅ `useSolarLighting()` : hook préparation éclairage chaque frame avec positions orbitales
+- ✅ `getPlanetMaterialConfig()` : configuration matériau selon type de corps et ensoleillement
+- ✅ `PlanetMaterialProps` étendu avec `roughness` et `metalness`
+- ✅ `PlanetRenderProps` étendu avec `bodyType` prop
+- ✅ Day/night cycle computation sans modifier modèle orbital
+- ✅ Aucune nouvelle dépendance externe ; `THREE.DirectionalLight` natif
+- ✅ Aucune allocation dans useFrame ; éclairage depuis positionsorbitales
+- ✅ Conservation textures V1.1.1 ; éclairage en surcouche
+- ✅ `tsc --noEmit` : aucune erreur
+- ✅ `npm run build` : réussite
+- ✅
+
+✅ `selftest orbital` : 7/7 tests validés
+- ✅ `selftest ephemeris` : 27/27 tests validés
+- ✅ Toutes les planètes, Soleil, Lune : éclairage et fonctionnement préservés
+- ✅ Temps simulé : 0.1x/1x/5x/10x, passé/futur, pause
+- ✅ Sélection, Focus Camera, zoom automatique/manuel
+- ✅ Rotation caméra, damping préservés

@@ -311,3 +311,167 @@
 ### Camera Follow avancé
 
 **PLANNED** — non implémenté pour l'instant.
+
+### V1.1.0 — Infrastructure rendu 3D
+
+**Validée ✅** — couche rendering `src/rendering/` créée et intégrée sans modifier les systèmes verrouillés.
+
+- Nouveau répertoire `src/rendering/` créé avec abstractions dédiées
+- Séparation claire : `src/orbital/` → trajectoires/positions, `src/rendering/` → apparence/répresentation 3D
+- Jamais de recalcul d'orbites dans rendering ; les positions sont fournies par `src/orbital/`
+- Usines de matériaux réutilisables : `createPlanetMesh()`, `createSunMesh()`
+- Types d'état planetaires `PlanetRenderData`, `SunRenderData`, `PlanetMaterialProps`, `PlanetRenderProps`, `SunRenderProps`
+- Hook `usePlanetRendering()` pour normaliser les données de rendu
+- Aucun nouveau dépendance Three.js au niveau des calculs orbitaux
+- Pas de création de matériaux/textures à chaque frame
+- Pas d'allocations dans la boucle `useFrame`
+- Pas de requêtes JPL dans `useFrame`
+- Conservation visuelle : apparence actuelle préservée, aucune nouvelle texture/bloom/atmosphère/shader complexe/background/ système lumière réaliste
+- Toutes les validations passées :
+  - `tsc --noEmit` : aucune erreur
+  - `npm run build` : réussite
+  - `selftest orbital` : 7/7 tests validés
+  - `selftest ephemeris` : 27/27 tests validés
+  - Toutes planètes, Soleil, Lune : positions et fonctionnement préservés
+  - Temps simulé : 0.1x/1x/5x/10x, passé/futur, pause
+  - Sélection, Focus Camera, zoom automatique, zoom manuel
+  - Rotation caméra, damping préservés
+
+### Architecture
+
+**ACTIVE** — la couche `src/rendering/` s'ajoute par-dessus l'architecture existante sans modifier `src/orbital/`. L'architecture en trois niveaux est désormais :
+
+1. `src/orbital/` — calculs orbitaux, JPL provider, modèles képlériens
+2. `src/orbital/ephemeris/` — ingestion et conversion données JPL
+3. `src/rendering/` — préparation de l'apparence 3D à partir de données orbitales
+
+Cette séparation permet une évolution progressive du rendu sans risque sur les calculs scientifiques.
+
+### Design
+
+**ACTIVE / conservateur** — l'apparence actuelle est préservée. La couche rendering fournit des abstractions prêtes pour d'éventuelles améliorations futures (V1.1.1+, V1.2) sans rien casser de l'existant.
+
+### NASA APIs
+
+**TERMINÉE** — infrastructure JPL complète. Aucune nouvelle requête dans la boucle de rendu.
+
+### Zustand
+
+**PLANNED / non utilisé** — état applicatif porté par useState/useRef.
+
+### Camera Follow avancé
+
+**PLANNED** — non implémenté.
+
+### V1.1.1 — Textures planétaires
+
+**Validée ✅** — infrastructure de texturesplanétaires créée sans modifier les systèmes scientifiques verrouisés.
+
+- Nouveau module `src/rendering/textureLoader.ts` avec `useTexture()`, `getMaterialConfig()`, `TEXTURE_PATHS`
+- Module `src/rendering/types.ts` avec types étendus `PlanetMaterialProps`, `PlanetRenderProps`, `SunRenderProps` incluant `map?: THREE.Texture`
+- Module `src/rendering/planetMesh.ts` mis à jour pour accepter `bodyType` et appliquer textures
+- Module `src/rendering/sunMesh.ts` créé pour l'abstraction Soleil
+- Couche `src/rendering/` séparant l'apparence 3D des calculs orbitaux dans `src/orbital/`
+- `Planet` component étendu avec prop `bodyType?: keyof typeof TEXTURE_PATHS`
+- Infrastructure de chargement textures : mise en cache unique, fallback en cas d'erreur, configs de materialité par type de corps
+- Aucune nouvelle dépendance externe ajoutée ; utilisation du `THREE.TextureLoader` natif
+- Aucune allocation dans la boucle `useFrame` ; textures chargées au démarrage
+- Apparence actuelle préservée : les textures s'ajoutent en surcouche optionnelle via `bodyType`
+- Toutes les validations passées :
+  - `tsc --noEmit` : aucune erreur
+  - `npm run build` : réussite
+  - `selftest orbital` : 7/7 tests validés
+  - `selftest ephemeris` : 27/27 tests validés
+  - Toutes les fonctionnalités verrouillées préservées (CameraController, OrbitControls, TimeControlBar, système temporel, vitesses, pause, sélection, Focus Camera, zoom, responsive)
+
+### Architecture
+
+**ACTIVE** — la couche `src/rendering/` est désormais complète avec support texture. L'architecture en trois niveaux est :
+
+1. `src/orbital/` — calculs orbitaux, JPL provider, modèles képlériens
+2. `src/orbital/ephemeris/` — ingestion et conversion données JPL  
+3. `src/rendering/` — apparence 3D, textures, matériaux, abstractions de mesh
+
+Cette structure permet l'évolution progressive vers V1.2 (shaders avancés, atmosphère) sans risque de régression sur les calculs scientifiques ou l'interface utilisateur.
+
+### Design
+
+**ACTIVE / évolutif** — l'infrastructure de textures est en place pour V1.1.1+. Les fichiers texture réels seront ajoutés dans une étape ultérieure. L'apparence actuelle reste comme base, les textures viendront s'ajouter par-dessus.
+
+### NASA APIs
+
+**TERMINÉE** — infrastructure JPL complète. Aucune nouvelle requête dans la boucle de rendu.
+
+### Zustand
+
+**PLANNED / non utilisé** — état applicatif porté par useState/useRef.
+
+### Camera Follow avancé
+
+**PLANNED** — non implémenté.
+
+### V1.1.2 — Éclairage + jour/nuit
+
+**Validée ✅** — infrastructure d'éclairage astronomique ajoutée sans modifier le modèle orbital ni les données JPL.
+
+- Nouvelle couche `src/rendering/` avec éclairage directionnel cohérent
+- Lumière directionnelle `createSunLight()` représentant le Soleil
+- Day/night cycle computation via `isBodyIlluminated()` et `useSolarLighting()`
+- Configuration de matériau compatible éclairage via `getPlanetMaterialConfig()`
+- `PlanetMaterialProps` étendu avec `roughness` et `metalness` par type de corps
+- `PlanetRenderProps` étendu avec `bodyType` prop
+- Day/night cycle : jour/nuit déterminé par la position du Soleil par rapport à chaque corps
+- Aucune modification du modèle orbital V0.9.4 ni des données JPL
+- Aucune nouvelle dépendance externe ; utilisation de `THREE.DirectionalLight` natif
+- Aucune allocation dans la boucle `useFrame` ; éclairage calculé depuis positionsorbitales
+- Conservation des textures V1.1.1 ; les textures restent applicables avec éclairage
+- Rendu cohérent lorsque les corps se déplacent (positions mises à jour chaque frame)
+- Toutes les validations passées :
+  - `tsc --noEmit` : aucune erreur
+  - `npm run build` : réussite
+  - `selftest orbital` : 7/7 tests validés
+  - `selftest ephemeris` : 27/27 tests validés
+  - Toutes les planètes, Soleil, Lune : éclairage et fonctionnement préservés
+  - Temps simulé : 0.1x/1x/5x/10x, passé/futur, pause
+  - Sélection, Focus Camera, zoom automatique/manuel
+  - Rotation caméra, damping préservés
+
+### V1.1.3 — Rotation réelle des corps (planifié)
+
+**En développement** — ajout de la rotation propre des corps célestes sur eux-mêmes.
+
+- Période de rotation gérée indépendamment de la révolution orbitale
+- Sens de rotation et orientation de l'axe configurables
+- Rotation continue avec le temps simulé ( passé, futur, pause)
+- 0.1x / 1x / 5x / 10x respectés
+- Aucun allocation inutile dans useFrame
+- Terre conserve sa position JPL, son orbite, sa texture, son éclairage jour/nuit, sa rotation propre
+- Lune conserve son positionnement JPL, sa relation Terre → Lune, sa texture, son comportement temporel
+- Autres planètes utilisent leur propre rotation sans modifier leur trajectoire
+- Documentation et tests en cours
+
+### Architecture
+
+**ACTIVE** — la couche `src/rendering/` s'est enrichie d'éclairage et de day/night cycle. L'architecture en trois niveaux est maintenant :
+
+1. `src/orbital/` — calculs orbitaux, JPL provider, modèles képlériens
+2. `src/orbital/ephemeris/` — ingestion et conversion données JPL
+3. `src/rendering/` — apparence 3D, éclairage, textures, matériaux, rotation
+
+Cette structure permet une évolution progressive vers des éclairages avancés (V1.2) et une rotation des corps (V1.1.3) sans risque de régression sur les calculs scientifiques ou l'interface utilisateur.
+
+### Design
+
+**ACTIVE / évolutif** — l'éclairage day/night est ajouté par-dessus l'infrastructure texture V1.1.1. L'apparence actuelle est enrichie d'un cycle jour/nuit réaliste sans casser l'existant.
+
+### NASA APIs
+
+**TERMINÉE** — infrastructure JPL complète. Aucun nouveau calcul orbital dans le rendu.
+
+### Zustand
+
+**PLANNED / non utilisé** — état applicatif porté par useState/useRef.
+
+### Camera Follow avancé
+
+**PLANNED** — non implémenté.

@@ -83,3 +83,51 @@ L'architecture V1.0.2 confirme que la connexion JPL peut s'étendre aux corps su
 L'architecture V1.0.3 confirme que l'intégration JPL peut s'étendre à l'ensemble du système solaire sans casser les hiérarchies existantes ni les systèmes LOCKED.
 
 Après V1.0.3, le prochain objectif est V1.1 — Style / rendu astronomique avancé, avec des améliorations visuelles basées sur les données JPL réelles.
+
+## Infrastructure rendu 3D (V1.1.0)
+
+- **Nouvelle couche** : `src/rendering/` ajoutée entre l'orbital et le rendu Three.js
+- **Séparation des responsabilités** :
+  - `src/orbital/` : trajectoires, positions, modèles képlériens, JPL provider
+  - `src/rendering/` : apparence, meshes, matériaux, textures futures
+- **Aucun recalcul d'orbite** dans rendering ; les positions proviennent de `src/orbital/`
+- **Usines de meshes** : `createPlanetMesh(data, props)` et `createSunMesh(data)` reçoivent des données déjà calculées
+- **Types typés** : `PlanetRenderData`, `SunRenderData`, `PlanetRenderProps`, `SunRenderProps` — indépendants de Three.js au niveau du calcul
+- **Hook `usePlanetRendering()`** : normalise position/radius/couleur/corps en `PlanetRenderData`
+- **Pas de dépendance Three.js** au niveau des calculs ; les imports Three.js n'interviennent que au moment de la création de mesh effective
+- **Performance** : pas de création de mesh/material par frame ; réutilisation des ressources existantes
+- **Conservation visuelle** : apparence actuelle intacte ; la layer rendering est opt-in pour d'évolutions futures (V1.1.1+)
+- **Hiérarchie** : Soleil → Planètes → Lune reste inchangée ; rendering s'insère comme couche intermédiaire
+
+L'ajout de `src/rendering/` prépare le terrain pour des améliorations visuelles futures (textures V1.1.1, shaders avancés) sans risque de régression sur les calculs orbitaux ou l'interface utilisateur.
+
+## Textures planétaires (V1.1.1)
+
+- **Nouvelle couche** : `src/rendering/textureLoader.ts` avec `useTexture()`, `getMaterialConfig()`, `TEXTURE_PATHS`
+- **Types étendus** : `PlanetMaterialProps` avec `map?: THREE.Texture`, `PlanetRenderProps` avec `bodyType`, `SunRenderProps`
+- **Usines de mesh** : `createPlanetMesh()` et `createSunMesh()` acceptent désormais `bodyType` pour appliquer textures
+- **Chemin des textures** : `TEXTURE_PATHS` définit les chemins d'accès pour chaque corps planétaire (sun, mercury, venus, earth, moon, mars, jupiter, saturn, uranus, neptune)
+- **Mise en cache** : `useTexture()` met en cache les textures chargées pour réutilisation, évite les allocations dans useFrame
+- **Configurations materialité** : `getMaterialConfig()` fournit roughness/metalness par type de corps
+- **Planet component** : accepte désormais `bodyType?: keyof typeof TEXTURE_PATHS` pour activer les textures
+- **Aucune texture fichier requis à V1.1.1** : l'infrastructure est en place ; les fichiers texture seront ajoutés dans une étape ultérieure
+- **Aucune régression** : toutes les validations passées (tsc, build, selftest orbital/ephemeris)
+- **Hiérarchie préservée** : Soleil → Planètes → Lune inchangée ; textures en surcouche optionnelle
+
+L'infrastructure texture est maintenant prête pour une utilisation future dans V1.2+ avec de vrais fichiers texture et shaders avancés.
+
+## Éclairage + jour/nuit (V1.1.2)
+
+- **Nouvelle fonctionnalité** : éclairage directionnel cohérent avec les positions orbitales
+- **Lumière directionnelle** : `createSunLight()` créant un `THREE.DirectionalLight` représentant le Soleil
+- **Day/night cycle** : calculé via `isBodyIlluminated()` qui détermine si un corps est éclairé en fonction de la direction du Soleil
+- **useSolarLighting()** : hook qui prépare les données d'éclairage pour chaque frame
+- **getPlanetMaterialConfig()** : configuration de matériau (rugosité, métallicité) selon le type de corps et son ensoleillement
+- **Séparation des responsabilités** : `src/orbital/` fournit les positions, `src/rendering/` fournit l'éclairage
+- **Aucun recalcul d'orbite** dans rendering ; les positions proviennent de `src/orbital/`
+- **Pas de dépendance Three.js** au niveau des calculs ; les imports Three.js n'interviennent que au moment de la création effective de la lumière
+- **Performance** : pas de calcul lourd inutile dans useFrame ; réutilisation des objets Three.js
+- **Conservation visuelle** : apparence actuelle enrichie d'un cycle jour/nuit ; pas de nouvelles textures ni shaders complexes
+- **Hiérarchie préservée** : Soleil → Planètes → Lune inchangée ; éclairage en surcouche optionnelle
+
+L'infrastructure V1.1.2 prépare le terrain pour V1.1.3 (rotation des corps) et les améliorations visuelles futures.

@@ -153,3 +153,65 @@
 - **Raison** : garantir une expérience utilisateur fluide en toutes circonstances, même en l'absence de connexion réseau ou de disponibilité de l'API JPL.
 - **Statut** : active (V1.0.3).
 - **Mise en œuvre** : vérification de la réponse HTTP ; si !response.ok, position reprise par le modèle képlérien simplifié.
+
+## D25 — Couche rendering V1.1.0
+
+- **Décision** : création d'une couche `src/rendering/` séparant l'apparence 3D des calculs orbitaux dans `src/orbital/`.
+- **Raison** : permettre des évolutions du rendu (textures, shaders) sans risque de régression sur les modèles scientifiques validés (V0.9.4, JPL). Le rendering devient opt-in pour les nouvelles fonctionnalités.
+- **Portée** : aucune modification de `src/orbital/`, pas de nouveaux calculs orbitaux, pas de nouvelles dépendances critiques. Seules des abstractions de présentation sont ajoutées.
+- **Statut** : active (V1.1.0).
+
+## D26 — Conservation visuelle V1.1.0
+
+- **Décision** : l'apparence actuelle de Neko Eyes est préservée à V1.1.0. Aucun nouvelle texture, bloom, atmosphère, shader complexe, nouveau background ou système lumière réaliste n'est ajouté à cette étape.
+- **Raison** : maintenir la stabilité et la compatibilité descendante. Les améliorations visuelles sont reportées à V1.1.1 (textures) et V1.2+ (shaders avancés).
+- **Statut** : active (V1.1.0).
+- **Contraintes** : aucun modificateur de CameraController, OrbitControls, TimeControlBar, système temporel, vitesses, pause, sélection, Focus Camera, zoom, responsive, logique de navigation.
+
+## D27 — Couche rendering sans dépendance orbitale V1.1.0
+
+- **Décision** : la couche `src/rendering/` ne contient aucun code de calcul orbital. Toutes les positions doivent être fournies en entrée par `src/orbital/`. Cela garantit que tout changement auxorbites n'affecte que `src/orbital/`, et non le rendering.
+- **Raison** : séparation des responsabilités stricte et prévention des bugs de régression où des changements orbitaux casseraient silencieusement le rendu ou inversement.
+- **Statut** : active (V1.1.0).
+
+## D28 — Infrastructure textures V1.1.1
+
+- **Décision** : création d'une infrastructure de texturesplanétaires dans `src/rendering/` sans modifier les systèmes scientifiques verrouisés.
+- **Raison** : préparer le terrain pour des améliorations visuelles futures (V1.2+) tout en maintenant la stabilité et la compatibilité descendante de V1.1.0.
+- **Portée** : aucune modification de `src/orbital/`, pas de nouveaux calculs orbitaux, pas de nouvelles dépendances critiques. Seules des abstractions de présentation et de chargement de textures sont ajoutées.
+- **Statut** : active (V1.1.1).
+
+## D29 — Planet component étendu V1.1.1
+
+- **Décision** : le composant `Planet` accepte une prop `bodyType?: keyof typeof TEXTURE_PATHS` pour activer les textures de manière optionnelle.
+- **Raison** : permettre l'activation des textures sans modifier le comportement par défaut ; la prop est optionnelle et n'affecte pas le rendu si non fournie.
+- **Statut** : active (V1.1.1).
+- **Mise en œuvre** : `bodyType?: keyof typeof TEXTURE_PATHS` ajouté à la signature de `Planet` ; le material `meshStandardMaterial` utilise le prop `map` conditionnel à partir de `useTexture()`.
+
+## D30 — Couleur et materialité par type de corps V1.1.1
+
+- **Décision** : `getMaterialConfig(bodyType)` fournit des valeurs de rugosité (roughness) et de métallicité (metalness) adaptées à chaque type de corpsplanétaire.
+- **Raison** : assurer une apparence cohérente et réaliste lors de l'activation des textures ; chaque type de corps a des propriétés visuelles distinctes.
+- **Statut** : active (V1.1.1).
+- **Valeurs prédéfinies** : terre (rugosité 0.5, métallicité 0.1), lune (0.8, 0.0), soleil (0.3, 0.1), jupiter (0.6, 0.2), saturne (0.7, 0.1), uranus (0.5, 0.0), neptune (0.5, 0.0), mercure (0.8, 0.1), vénus (0.5, 0.0).
+
+## D31 — Éclairage directionnel V1.1.2
+
+- **Décision** : ajout d'une lumière directionnelle `THREE.DirectionalLight` représentant le Soleil, avec day/night cycle computation.
+- **Raison** : offrir un éclairage astronomique cohérent avec les positions orbitales JPL, sans modifier le modèle orbital ni les données JPL.
+- **Statut** : active (V1.1.2).
+- **Implémentation** : `createSunLight()`, `isBodyIlluminated()`, `useSolarLighting()`, `getPlanetMaterialConfig()`.
+
+## D32 — Day/night cycle V1.1.2
+
+- **Décision** : cycle jour/nuit déterminé par la position du Soleil par rapport à chaque corpsplanétaire, sans mécanisme de rotation physique (réservé à V1.1.3).
+- **Raison** : permettre une visualisation jour/nuit réaliste basée sur les positions orbitales existantes, sans complexifier le modèle de rotation pour cette étape.
+- **Statut** : active (V1.1.2).
+- **Mise en œuvre** : `isBodyIlluminated()` vérifie si le produit scalaire du vecteur corps‑Soleil est positif.
+
+## D33 — Matériau compatible éclairage V1.1.2
+
+- **Décision** : `getPlanetMaterialConfig()` fournit des valeurs de rugosité (roughness) et de métallicité (metalness) adaptées à chaque type de corpsplanétaire lorsqu'il est éclairé ou dans l'ombre.
+- **Raison** : assurer une apparence cohérente et réaliste lors de l'activation de l'éclairage, sans modifier les propriétés matérielles de base.
+- **Statut** : active (V1.1.2).
+- **Valeurs prédéfinies** : terre (0.5/0.1 éclairé, 0.9/0.0 ombre), lune (0.8/0.0), mars (0.8/0.0), jupiter (0.6/0.2), saturne (0.7/0.1).

@@ -170,3 +170,61 @@
 - Tests cache/erreur réseau : fallback vers V0.9.4 positions
 - Comparaison modèle V0.9.4 vs JPL pour les 8 planètes
 - Documentation mise à jour sur tous les fichiers de docs
+
+## V1.1.0 — Infrastructure rendu 3D
+
+- Couche rendering `src/rendering/` ajoutée séparement de `src/orbital/`
+- Nouveau répertoire avec abstractions de rendu planetaires
+- Usines `createPlanetMesh()` et `createSunMesh()` sans calcul d'orbite
+- Types `PlanetRenderData`, `SunRenderData`, `PlanetMaterialProps`, `PlanetRenderProps`, `SunRenderProps`
+- Hook `usePlanetRendering()` pour normalisation de données
+- Aucun nouveau dépendance Three.js au niveau calculs orbitaux
+- Pas de création de matériaux/textures par frame
+- Pas d'allocations dans useFrame
+- Pas de requêtes JPL dans useFrame
+- Apparence actuelle préservée : aucune nouvelle texture/bloom/atmosphère/shader/background/soleil réaliste
+- `tsc --noEmit` : aucune erreur
+- `npm run build` : réussite
+- `selftest orbital` : 7/7 tests validés
+- `selftest ephemeris` : 27/27 tests validés
+- Conservation de toutes les fonctionnalités verrouillées (CameraController, OrbitControls, TimeControlBar, etc.)
+- Séparation architecture : `src/orbital/` trajectoires vs `src/rendering/` apparence
+
+## V1.1.1 — Textures planétaires
+
+- Infrastructure de texturesplanétaires dans `src/rendering/textureLoader.ts`
+- Module `useTexture()` avec mise en cache unique des textures THREE.js
+- Module `getMaterialConfig()` avec configs de rugosité/métallique par type de corps
+- `TEXTURE_PATHS` definiendofkeys: sun, mercury, venus, earth, moon, mars, jupiter, saturn, uranus, neptune
+- `src/rendering/types.ts` étendu avec `map?: THREE.Texture` dans `PlanetMaterialProps`
+- `Planet` component étendu avec prop `bodyType?: keyof typeof TEXTURE_PATHS`
+- `src/rendering/planetMesh.ts` mis à jour pour appliquer texture via `map` prop
+- `src/rendering/sunMesh.ts` créé pour abstraction Soleil
+- Aucun fichier texture requis à cette étape (fichiers à ajouter ultérieurement)
+- Aucune nouvelle dépendance externe ; utilisation de `THREE.TextureLoader` natif
+- Aucune allocation dans la boucle `useFrame` ; chargement au démarrage seulement
+- Apparence actuelle préservée ; textures en surcouche optionnelle via `bodyType`
+- `tsc --noEmit` : aucune erreur
+- `npm run build` : réussite
+- `selftest orbital` : 7/7 tests validés
+- `selftest ephemeris` : 27/27 tests validés
+- Toutes les fonctionnalités verrouillées préservées
+
+## V1.1.2 — Éclairage + jour/nuit
+
+- Infrastructure d'éclairage astronomique dans `src/rendering/`
+- `createSunLight()` : lumière directionnelle représentant le Soleil
+- `isBodyIlluminated()` : détermination jour/nuit par corps
+- `useSolarLighting()` : hook préparation éclairage chaque frame
+- `getPlanetMaterialConfig()` : configuration matériau selon type de corps et ensoleillement
+- `PlanetMaterialProps` étendu avec `roughness` et `metalness`
+- `PlanetRenderProps` étendu avec `bodyType` prop
+- Day/night cycle computation sans modifier modèle orbital
+- Aucune nouvelle dépendance externe ; `THREE.DirectionalLight` natif
+- Aucune allocation dans useFrame ; éclairage depuis positionsorbitales
+- Conservation textures V1.1.1 ; éclairage en surcouche
+- `tsc --noEmit` : aucune erreur
+- `npm run build` : réussite
+- `selftest orbital` : 7/7 tests validés
+- `selftest ephemeris` : 27/27 tests validés
+- Conservation de toutes les fonctionnalités verrouillées

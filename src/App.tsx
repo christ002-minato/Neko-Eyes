@@ -4,6 +4,8 @@ import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import nekoLogo from '@/imports/neko_eyer_logo.png'
 import { JPLProvider } from '@/orbital/ephemeris'
+import { useSolarLighting } from "@/rendering"
+
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
