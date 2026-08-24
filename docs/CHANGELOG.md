@@ -70,6 +70,25 @@
 
 
 
+
+
+## V1.0.0 — Infrastructure Ephemeris JPL/NASA
+
+- Infrastructure JPL/NASA mise en place dans `src/orbital/ephemeris/`
+- Abstraction `EphemerisProvider` créée, indépendante de Three.js et React
+- `JPLProvider` encapsule la communication avec l'API JPL Horizons
+- Cache mémoire策略 implémenté pour éviter les requêtes réseau répétées
+- Terre (Earth) comme premier prototype de body JPL
+- Parsing de réponse JPL implémenté dans `jplProvider.ts`
+- `EphemerisState` et `SceneEphemerisState` types définis
+- Selftest : tous les tests infrastructure passés
+- `npx tsc --noEmit` : aucune erreur
+- `npm run build` : réussite
+- AUCUNE modification visuelle : V0.9.4 continue de piloter le rendu
+- Aucun système verrouillé n'a été modifié
+- Dépendances ajoutées : aucune nouvelle dépendance externe
+- Fichiers créés : `src/orbital/ephemeris/types.ts`, `ephemerisProvider.ts`, `jplProvider.ts`, `index.ts`, `selftest.ts
+
 ## V0.9.4 — Activation orbitale
 
 - Paramètres orbitaux `eccentricity`, `inclination`, `nodeLongitude` appliqués aux 8 planètes et à la Lune dans `src/App.tsx`
@@ -93,3 +112,61 @@
 ---
 
 **Aucune fonctionnalité PLANNED n'est présentée comme implémentée.**
+
+## V1.0.1 — Terre réelle JPL
+
+- Infrastructure JPL/NASA pleinement opérationnelle dans `src/orbital/ephemeris/`
+- Abstraction `EphemerisProvider` utilisée pour le provider JPL
+- `JPLProvider` avec requêtes API vers `https://ssd-api.jpl.nasa.gov/api/horizons.api`
+- Cache mémoire stratégies pour éviter les requêtes réseau répétées
+- Conversion unités JPL (AU) → unités scène (facteur 55)
+- Terre connectée aux données réelles JPL Horizons
+- Époque / simulationTime convertie : 1 unité sim = 1 heure, époque = 19 août 2025
+- Mécanisme de comparaison : position calculée V0.9.4 vs position JPL
+- Terre vérifiée sur plusieurs dates/instants : présent, passé, futur
+- Plusieurs vitesses de simulation : 0.1x, 1x, 5x, 10x
+- Rendu actuel reste fonctionnel : aucune modification visuelle verrouillée
+- Aucun système verrouillé modifié (CameraController, OrbitControls, TimeControlBar, design, textures, background)
+- Tests : selftest orbital 7/7, selftest ephemeris, tsc --noEmit, npm run build
+- Conversion unités testées : AU → scène
+- Tests dates : passé, présent, futur
+- Tests cache/erreur réseau : mode dégradé fonctionnel
+- Comparaison modèle JPL vs modèle affiché
+- Documentation mise à jour sur toutes les fichiers de docs
+
+## V1.0.2 — Terre + Lune JPL
+
+- Réutilisation de l'implémentation Terre JPL validée en V1.0.1
+- Lune connectée aux données JPL Horizons (JPL ID 301) via l'API officielle
+- Position Lune récupérée en unités géocentriques (relative à la Terre)
+- Pas de double comptage du mouvement orbital Terre → Lune
+- Conversion unités : Terre en AU → scène (×55), Lune en géocentriques → offset lunaire
+- Mécanisme de comparaison : position calculée V0.9.4 vs position JPL pour Terre et Lune
+- Terre et Lune vérifiées sur plusieurs dates/instants : présent, passé, futur
+- Vitesses de simulation : 0.1x, 1x, 5x, 10x
+- Pause/reprise : fonctionnement correct avec gel de simTime
+- Mode dégradé automatique : retour au modèle V0.9.4 si JPL indisponible
+- Cache mémoire stratégies pour éviter les requêtes réseau répétées
+- Aucun système verrouillé modifié (CameraController, OrbitControls, TimeControlBar, design, textures, background)
+- Tests : selftest orbital 7/7, selftest ephemeris, tsc --noEmit, npm run build
+- Comparaison Terre modèle vs Terre JPL et Lune modèle vs Lune JPL
+- Distance Terre-Lune vérifiée
+- Documentation mise à jour sur tous les fichiers de docs
+
+## V1.0.3 — Toutes les planètes JPL
+
+- Extension de l'infrastructure JPL aux 8 planètes : Mercure, Vénus, Terre, Mars, Jupiter, Saturne, Uranus, Neptune
+- Utilisation des identifiants JPL/Horizons corrects pour chaque corps planétaire
+- Conversion unités JPL (AU) → unités scène (facteur 55) pour chaque planète
+- Comparaison modèle V0.9.4 vs JPL pour chaque planète avant validation finale
+- Mécanisme de fallback automatique vers V0.9.4 si JPL indisponible pour un corps donné
+- Position Lune preserved via hiérarchie Terre → Lune (pas de double comptage)
+- Aucun système verrouillé modifié (CameraController, OrbitControls, TimeControlBar, design, textures, background)
+- Cache mémoire stratégies pour éviter les requêtes réseau répétées ; pas de requête dans la boucle de rendu
+- Tests : selftest orbital 7/7, selftest ephemeris, tsc --noEmit, npm run build
+- Tests positions/époques/unités/référentiels : 8 planètes
+- Tests passé/présent/futur avec vitesses 0.1x/1x/5x/10x
+- Tests pause, avant/arrière
+- Tests cache/erreur réseau : fallback vers V0.9.4 positions
+- Comparaison modèle V0.9.4 vs JPL pour les 8 planètes
+- Documentation mise à jour sur tous les fichiers de docs

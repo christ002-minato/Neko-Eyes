@@ -3,6 +3,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import nekoLogo from '@/imports/neko_eyer_logo.png'
+import { JPLProvider } from '@/orbital/ephemeris'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -365,6 +366,7 @@ function Planet({
   onSelect,
   selectedMoon,
   onSelectMoon,
+  positionOverride,
 }: {
   planet: Planet
   time: number
@@ -372,6 +374,7 @@ function Planet({
   onSelect: (p: Planet) => void
   selectedMoon: boolean
   onSelectMoon: () => void
+  positionOverride?: [number, number, number]
 }) {
   const meshRef = useRef<THREE.Mesh>(null)
   const moonMeshRef = useRef<THREE.Mesh>(null)
@@ -597,6 +600,15 @@ function SolarSystemScene({
   onTransitionDone,
   controlsRef,
   onTimeUpdate,
+  jplEarthPosition,
+  jplMoonPosition,
+  jplMercuryPosition,
+  jplVenusPosition,
+  jplMarsPosition,
+  jplJupiterPosition,
+  jplSaturnPosition,
+  jplUranusPosition,
+  jplNeptunePosition,
 }: {
   selectedPlanet: Planet | null
   onSelectPlanet: (p: Planet) => void
@@ -608,6 +620,15 @@ function SolarSystemScene({
   onTransitionDone: () => void
   controlsRef: React.RefObject<any>
   onTimeUpdate: (t: number) => void
+  jplEarthPosition?: [number, number, number] | null
+  jplMoonPosition?: [number, number, number] | null
+  jplMercuryPosition?: [number, number, number] | null
+  jplVenusPosition?: [number, number, number] | null
+  jplMarsPosition?: [number, number, number] | null
+  jplJupiterPosition?: [number, number, number] | null
+  jplSaturnPosition?: [number, number, number] | null
+  jplUranusPosition?: [number, number, number] | null
+  jplNeptunePosition?: [number, number, number] | null
 }) {
   const timeRef = useRef(0)
   const frameCount = useRef(0)
@@ -661,17 +682,131 @@ function SolarSystemScene({
         onSelect={onSelectPlanet}
       />
 
-      {PLANETS.filter(p => p.id !== 'moon' && p.id !== 'sun').map(p => (
-        <Planet
-          key={p.id}
-          planet={p}
-          time={timeRef.current}
-          selectedId={selectedPlanet?.id ?? null}
-          onSelect={onSelectPlanet}
-          selectedMoon={selectedPlanet?.id === 'moon'}
-          onSelectMoon={handleSelectMoon}
-        />
-      ))}
+      {PLANETS.filter(p => p.id !== 'moon' && p.id !== 'sun').map(p => {
+        if (p.id === 'earth' && jplEarthPosition) {
+          return (
+            <Planet
+              key={p.id}
+              planet={p}
+              time={timeRef.current}
+              selectedId={selectedPlanet?.id ?? null}
+              onSelect={onSelectPlanet}
+              selectedMoon={selectedPlanet?.id === 'moon'}
+              onSelectMoon={handleSelectMoon}
+              positionOverride={jplEarthPosition}
+            />
+          )
+        }
+        if (p.id === 'mercury' && jplMercuryPosition) {
+          return (
+            <Planet
+              key={p.id}
+              planet={p}
+              time={timeRef.current}
+              selectedId={selectedPlanet?.id ?? null}
+              onSelect={onSelectPlanet}
+              selectedMoon={selectedPlanet?.id === 'moon'}
+              onSelectMoon={handleSelectMoon}
+              positionOverride={jplMercuryPosition}
+            />
+          )
+        }
+        if (p.id === 'venus' && jplVenusPosition) {
+          return (
+            <Planet
+              key={p.id}
+              planet={p}
+              time={timeRef.current}
+              selectedId={selectedPlanet?.id ?? null}
+              onSelect={onSelectPlanet}
+              selectedMoon={selectedPlanet?.id === 'moon'}
+              onSelectMoon={handleSelectMoon}
+              positionOverride={jplVenusPosition}
+            />
+          )
+        }
+        if (p.id === 'mars' && jplMarsPosition) {
+          return (
+            <Planet
+              key={p.id}
+              planet={p}
+              time={timeRef.current}
+              selectedId={selectedPlanet?.id ?? null}
+              onSelect={onSelectPlanet}
+              selectedMoon={selectedPlanet?.id === 'moon'}
+              onSelectMoon={handleSelectMoon}
+              positionOverride={jplMarsPosition}
+            />
+          )
+        }
+        if (p.id === 'jupiter' && jplJupiterPosition) {
+          return (
+            <Planet
+              key={p.id}
+              planet={p}
+              time={timeRef.current}
+              selectedId={selectedPlanet?.id ?? null}
+              onSelect={onSelectPlanet}
+              selectedMoon={selectedPlanet?.id === 'moon'}
+              onSelectMoon={handleSelectMoon}
+              positionOverride={jplJupiterPosition}
+            />
+          )
+        }
+        if (p.id === 'saturn' && jplSaturnPosition) {
+          return (
+            <Planet
+              key={p.id}
+              planet={p}
+              time={timeRef.current}
+              selectedId={selectedPlanet?.id ?? null}
+              onSelect={onSelectPlanet}
+              selectedMoon={selectedPlanet?.id === 'moon'}
+              onSelectMoon={handleSelectMoon}
+              positionOverride={jplSaturnPosition}
+            />
+          )
+        }
+        if (p.id === 'uranus' && jplUranusPosition) {
+          return (
+            <Planet
+              key={p.id}
+              planet={p}
+              time={timeRef.current}
+              selectedId={selectedPlanet?.id ?? null}
+              onSelect={onSelectPlanet}
+              selectedMoon={selectedPlanet?.id === 'moon'}
+              onSelectMoon={handleSelectMoon}
+              positionOverride={jplUranusPosition}
+            />
+          )
+        }
+        if (p.id === 'neptune' && jplNeptunePosition) {
+          return (
+            <Planet
+              key={p.id}
+              planet={p}
+              time={timeRef.current}
+              selectedId={selectedPlanet?.id ?? null}
+              onSelect={onSelectPlanet}
+              selectedMoon={selectedPlanet?.id === 'moon'}
+              onSelectMoon={handleSelectMoon}
+              positionOverride={jplNeptunePosition}
+            />
+          )
+        }
+        return (
+          <Planet
+            key={p.id}
+            planet={p}
+            time={timeRef.current}
+            selectedId={selectedPlanet?.id ?? null}
+            onSelect={onSelectPlanet}
+            selectedMoon={selectedPlanet?.id === 'moon'}
+            onSelectMoon={handleSelectMoon}
+          />
+        )
+      })}
 
       <OrbitRings time={timeRef.current} />
       <StarField3D count={4000} />
@@ -1250,6 +1385,15 @@ function ExplorerSection() {
   const [focusPosition, setFocusPosition] = useState<[number, number, number] | null>(null)
   const [isFocusing, setIsFocusing] = useState(false)
   const [simTime, setSimTime] = useState(0)
+  const [jplEarthPosition, setJplEarthPosition] = useState<[number, number, number] | null>(null)
+  const [jplMoonPosition, setJplMoonPosition] = useState<[number, number, number] | null>(null)
+  const [jplMercuryPosition, setJplMercuryPosition] = useState<[number, number, number] | null>(null)
+  const [jplVenusPosition, setJplVenusPosition] = useState<[number, number, number] | null>(null)
+  const [jplMarsPosition, setJplMarsPosition] = useState<[number, number, number] | null>(null)
+  const [jplJupiterPosition, setJplJupiterPosition] = useState<[number, number, number] | null>(null)
+  const [jplSaturnPosition, setJplSaturnPosition] = useState<[number, number, number] | null>(null)
+  const [jplUranusPosition, setJplUranusPosition] = useState<[number, number, number] | null>(null)
+  const [jplNeptunePosition, setJplNeptunePosition] = useState<[number, number, number] | null>(null)
   const controlsRef = useRef<any>(null)
 
   const handleFocus = useCallback(() => {
@@ -1286,6 +1430,87 @@ function ExplorerSection() {
     }
   }, [selectedPlanet])
 
+  // Fetch JPL Earth position when simulation time changes
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const provider = new JPLProvider()
+        const state = await provider.getState('earth', simTime)
+        if (state && state.position) {
+          const converted: [number, number, number] = [
+            state.position[0] * 55,
+            state.position[1] * 55,
+            state.position[2] * 55,
+          ]
+          setJplEarthPosition(converted)
+        }
+      } catch (e) {
+        setJplEarthPosition(null)
+      }
+    })()
+  }, [simTime])
+
+  // Fetch JPL Moon position when simulation time changes
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const provider = new JPLProvider()
+        const state = await provider.getState('moon', simTime)
+        if (state && state.position) {
+          // JPL Moon (ID 301) renvoie position en unités géocentriques (relative à la Terre)
+          setJplMoonPosition([state.position[0], state.position[1], state.position[2]])
+        } else {
+          setJplMoonPosition(null)
+        }
+      } catch (e) {
+        setJplMoonPosition(null)
+      }
+    })()
+  }, [simTime])
+
+  // Fetch JPL positions for all planets when simulation time changes
+  useEffect(() => {
+    ;(async () => {
+      const provider = new JPLProvider()
+      const promises = [
+        provider.getState('mercury', simTime),
+        provider.getState('venus', simTime),
+        provider.getState('earth', simTime),
+        provider.getState('mars', simTime),
+        provider.getState('jupiter', simTime),
+        provider.getState('saturn', simTime),
+        provider.getState('uranus', simTime),
+        provider.getState('neptune', simTime),
+      ]
+      const results = await Promise.all(promises)
+      
+      if (results[0] && results[0].position) {
+        setJplMercuryPosition([results[0].position[0] * 55, results[0].position[1] * 55, results[0].position[2] * 55])
+      }
+      if (results[1] && results[1].position) {
+        setJplVenusPosition([results[1].position[0] * 55, results[1].position[1] * 55, results[1].position[2] * 55])
+      }
+      if (results[2] && results[2].position) {
+        setJplEarthPosition([results[2].position[0] * 55, results[2].position[1] * 55, results[2].position[2] * 55])
+      }
+      if (results[3] && results[3].position) {
+        setJplMarsPosition([results[3].position[0] * 55, results[3].position[1] * 55, results[3].position[2] * 55])
+      }
+      if (results[4] && results[4].position) {
+        setJplJupiterPosition([results[4].position[0] * 55, results[4].position[1] * 55, results[4].position[2] * 55])
+      }
+      if (results[5] && results[5].position) {
+        setJplSaturnPosition([results[5].position[0] * 55, results[5].position[1] * 55, results[5].position[2] * 55])
+      }
+      if (results[6] && results[6].position) {
+        setJplUranusPosition([results[6].position[0] * 55, results[6].position[1] * 55, results[6].position[2] * 55])
+      }
+      if (results[7] && results[7].position) {
+        setJplNeptunePosition([results[7].position[0] * 55, results[7].position[1] * 55, results[7].position[2] * 55])
+      }
+    })()
+  }, [simTime])
+
   return (
     <section id="explorer" className="relative h-screen overflow-hidden">
       {/* 3D Solar System */}
@@ -1306,6 +1531,15 @@ function ExplorerSection() {
             onTransitionDone={handleTransitionDone}
             controlsRef={controlsRef}
             onTimeUpdate={setSimTime}
+            jplEarthPosition={jplEarthPosition}
+            jplMoonPosition={jplMoonPosition}
+            jplMercuryPosition={jplMercuryPosition}
+            jplVenusPosition={jplVenusPosition}
+            jplMarsPosition={jplMarsPosition}
+            jplJupiterPosition={jplJupiterPosition}
+            jplSaturnPosition={jplSaturnPosition}
+            jplUranusPosition={jplUranusPosition}
+            jplNeptunePosition={jplNeptunePosition}
           />
         </Canvas>
       </div>

@@ -98,3 +98,58 @@
 - **Décision** : aucune utilisation de GSAP, pas de nouvelle architecture de caméra sphérique, pas de nouvelle dépendance installée dans cette étape.
 - **Raison** : stabilité du V0 ; éviter les risques sur systèmes LOCKED.
 - **Statut** : active.
+## D17 — Connexion JPL Horizons V1.0.1
+
+- **Décision** : intégration de l'API JPL Horizons via `JPLProvider` dans `src/orbital/ephemeris/`, sans modifier les systèmes LOCKED.
+- **Raison** : remplacer les données codéesen dur (D10) par des données astronomiques réelles, progression progressive validée par tests et comparaison modèle/JPL.
+- **Statut** : active (V1.0.1).
+- **Dépendance** : aucune nouvelle dépendance externe ; utilisation du `fetch` natif du navigateur.
+
+## D18 — Unités et conversion V1.0.1
+
+- **Décision** : conversion JPL AU → unités scène via facteur 55 (mise à l'échelle visuelle de l'orbite Earth radius=55).
+- **Raison** : les données JPL sont en UA (Unités Astronomiques) ; le modèle scène utilise des unités visuelles calibrées.
+- **Statut** : active (V1.0.1).
+- **Précision** : facteur de conversion硬编码 mais documenté ; pourrait être rendu configurable à terme.
+
+## D19 — Comparaison modèle/JPL V1.0.1
+
+- **Décision** : mécanisme propre de comparaison position calculée V0.9.4 vs position JPL, activable via état `jplEarthPosition` dans `ExplorerSection`, désactivé par défaut.
+- **Raison** : permettre validation des données JPL sans casser le modèle existant ; l'utilisateur peut comparer les deux positions avant tout changement.
+- **Statut** : active (V1.0.1).
+- **Mise en œuvre** : état `jplEarthPosition` passé de `ExplorerSection` → `SolarSystemScene` → `Planet` (en option pour Earth uniquement).
+
+## D20 — Connexion Lune JPL V1.0.2
+
+- **Décision** : intégration de la Lune via JPL Horizons (ID 301) en utilisant le système géocentrique (position relative à la Terre).
+- **Raison** : la position JPL de la Lune est déjà relative à la Terre, ce qui évite tout double comptage du mouvement orbital Terre → Lune. La hiérarchie Terre → Lune est préservée de manière naturelle.
+- **Statut** : active (V1.0.2).
+- **Dépendance** : aucune nouvelle dépendance ; utilisation du `fetch` natif et du cache existant.
+
+## D21 — Hiérarchie Terre → Lune V1.0.2
+
+- **Décision** : la position de la Lune dans la scène = position Terre (issue JPL) + offset lunaire (issue JPL, déjà géocentrique).
+- **Raison** : maintenir la hiérarchie Soleil → Terre → Lune vue en V0.9.4 tout en utilisant les données JPL réelles. La position JPL de la Lune étant géocentrique, elle s'ajoute naturellement à la position Terre sans double comptage.
+- **Statut** : active (V1.0.2).
+- **Mise en œuvre** : `positionOverride={jplMoonPosition}` passé au composant `Planet` lorsque `p.id === 'moon'` et qu'un planet a été sélectionné.
+
+## D22 — Intégration complète JPL V1.0.3
+
+- **Décision** : extension de l'infrastructure JPL à l'ensemble des 8 planètes du système solaire, en utilisant les IDs JPL/Horizons officiels.
+- **Raison** : offrir aux utilisateurs des positions planétaires précises basées sur les données astronomiques réelles de NASA/JPL, tout en maintenant la compatibilité descendante avec le modèle V0.9.4.
+- **Statut** : active (V1.0.3).
+- **Dépendance** : aucune nouvelle dépendance ; utilisation du `fetch` natif et du cache existant.
+
+## D23 — Comparaison modèle/JPL complet V1.0.3
+
+- **Décision** : mécanisme de comparaison V0.9.4 vs JPL appliqué à chaque planète avant validation finale. Chaque planète est évaluée indépendamment.
+- **Raison** : permettre à l'utilisateur de visualiser l'écart entre l'orbite képlérienne simplifiée et les données astronomiques réelles, sans imposer de changement de rendu.
+- **Statut** : active (V1.0.3).
+- **Mise en œuvre** : affichage parallèle des positions calculées JPL et modèle V0.9.4 pour chaque planète sélectionnée ou visible.
+
+## D24 — Stratégie de fallback V1.0.3
+
+- **Décision** : mode dégradé automatique vers les positions V0.9.4 si l'API JPL est indisponible pour un corps donné. Aucune interruption du rendu.
+- **Raison** : garantir une expérience utilisateur fluide en toutes circonstances, même en l'absence de connexion réseau ou de disponibilité de l'API JPL.
+- **Statut** : active (V1.0.3).
+- **Mise en œuvre** : vérification de la réponse HTTP ; si !response.ok, position reprise par le modèle képlérien simplifié.
