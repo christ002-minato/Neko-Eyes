@@ -131,3 +131,135 @@ L'infrastructure texture est maintenant prête pour une utilisation future dans 
 - **Hiérarchie préservée** : Soleil → Planètes → Lune inchangée ; éclairage en surcouche optionnelle
 
 L'infrastructure V1.1.2 prépare le terrain pour V1.1.3 (rotation des corps) et les améliorations visuelles futures.
+
+## Visual Scale / Scene Mapping + Rendu spatial réaliste (V1.2.0)
+
+### Visual Scale — `src/rendering/visualScale.ts`
+
+Nouveau module centralisant la conversion entre données astronomiques (orbitales/JPL) et unités scène Three.js.
+
+**Responsabilités :**
+- Facteur d'échelle visuelle configurable et centralisé (pas dispersé dans App.tsx)
+- Séparation stricte : tailles des corps (`bodySizeScale`) ≠ distances orbitales (`distanceScale`, `earthMoonDistanceScale`)
+- Indépendant des calculs orbitaux et données JPL — aucune modification de `src/orbital/`
+
+**Configuration par défaut :**
+```typescript
+const DEFAULT_VISUAL_SCALE: VisualScaleConfig = {
+  distanceScale: 3.5,           // Soleil → planètes ×3.5
+  earthMoonDistanceScale: 6.0,  // Terre → Lune ×6.0 (Lune détachée)
+  bodySizeScale: 1.0,           // Tailles conservées
+  minVisualDistance: 0.5,       // Garde-fou collision visuelle
+}
+```
+
+**API :**
+- `mapOrbitalDistanceToVisual(orbitalDistance, isEarthMoonDistance?)` — distance orbitale → visuelle
+- `mapBodySizeToVisual(orbitalRadius)` — rayon corps → visuel
+- `mapOrbitalPositionToVisual(orbitalPosition, isEarthMoonOffset?)` — Vec3 orbitale → visuelle
+- `computeVisualScales(definitions)` — calcul groupé pour initialisation
+- `getVisualScale()`, `setVisualScale()`, `resetVisualScale()` — configuration runtime
+
+**Intégration :** `getPlanetPosition()`, `getMoonOffset()`, `Planet`, `Sun`, `OrbitRings`, `CameraController`, `OrbitControls`, `fog`, `pointLight` — tous utilisent le visual scaling.
+
+### Textures planétaires — `src/rendering/textureLoader.ts`
+
+Infrastructure de chargement performante :
+- `preloadAllTextures()` au démarrage — 10 corps (sun, mercury, venus, earth, moon, mars, jupiter, saturn, uranus, neptune)
+- Cache `Map<BodyType, THREE.Texture>` — réutilisation, pas d'allocation useFrame
+- Fallback placeholder coloré si fichier manquant — pas d'erreur bloquante
+- `getMaterialConfig(BodyType)` — roughness/metalness par type de corps
+- `TEXTURE_PATHS` — mapping déclaratif chemins textures
+
+### Matériaux & Éclairage — Intégration V1.1.2
+
+- `Planet` component : props `bodyType?: BodyType`, `illuminated?: boolean`, `moonIlluminated?: boolean`
+- `Sun` component : migration shader procédural → `meshStandardMaterial` + texture + `emissive`/`emissiveIntensity`
+- `useSolarLighting()` dans `SolarSystemScene` → `DirectionalLight` + `planetIllumination` (calculé chaque frame)
+- `getPlanetMaterialConfig(bodyType, isIlluminated)` → roughness/metalness dynamiques selon jour/nuit
+- Day/night cycle préservé et compatible textures
+
+### Architecture respectée
+
+```
+JPL / Orbital (src/orbital/, src/orbital/ephemeris/)
+       ↓
+position astronomique réelle (inchangée)
+       ↓
+Visual Scale / Scene Mapping (src/rendering/visualScale.ts)
+       ↓
+Rendering 3D (src/rendering/ : textures, matériaux, éclairage)
+       ↓
+Three.js (scene, meshes, lights)
+```
+
+**Contraintes respectées :**
+- Aucune modification données JPL, `JPLProvider`, `EphemerisProvider`, `getBodyPosition()`, calculs orbitaux V0.9.4
+- Aucun recalcul position astronomique dans rendering
+- Aucun système LOCKED modifié (CameraController, OrbitControls, TimeControlBar, Focus Camera, sélection, zoom, navigation)
+- Performance : zéro allocation useFrame, zéro réseau useFrame, textures chargées au démarrage
+- Extensibilité : architecture prête pour anneaux Saturne (bodyType + ring geometry séparée)
+
+### Design
+
+**ACTIVE / évolutif** — le visual scaling et les textures transforment l'apparence géométrique en rendu astronomique crédible sans casser l'existant. Le Soleil a un rendu lumineux distinct (emissive), les planètes conservent leurs différences visuelles via textures propres.
+
+## Audit et corrections rendering — 2026-08-26
+
+Le code réel utilise désormais `defineOrbitalSystem()` puis `getBodyPosition()` pour les positions de secours. Les données JPL restent des overrides fournis par `useEffect`, et `src/rendering/` ne calcule aucune orbite.
+
+`createPlanetMesh()` et `createSunMesh()` sont les factories de présentation; `Sun` utilise effectivement `createSunMesh()`. Le jour/nuit réel est produit par une `PointLight` au Soleil, car une seule `DirectionalLight` ne peut pas représenter une source radiale pour toutes les planètes. Une `DirectionalLight` de faible intensité est conservée comme fill.
+
+La rotation propre est indépendante de l’orbite: `getRotationAngle(simTime, rotationPeriod)` vit dans `src/rendering/rotation.ts`. Elle remplace l’ancienne rotation basée sur `delta`, qui continuait pendant la pause.
+
+## Améliorations de rendu V1.3.0 (trajectoires, fond, jour/nuit, sélection)
+
+Ajout au-dessus de l'architecture existante, sans modification de `src/orbital/` ni du système JPL.
+
+### Trajectoires — `src/rendering/trajectory.ts`
+
+- Couleurs de trajectoire centralisées : `TRAJECTORY_COLORS` (une couleur par corps) + `getTrajectoryColor(bodyId)`.
+- `OrbitRings` (anneaux planétaires) et l'anneau orbital lunaire utilisent `getTrajectoryColor()` au lieu d'une couleur unique codée en dur.
+- C'est une configuration purement visuelle, réutilisable, indépendante des calculs orbitaux.
+
+### Fond
+
+- Fond (`<color attach="background">`) et `fog` : `#000000`.
+- Étoiles 3D : `pointsMaterial` avec `fog={false}` pour rester lisibles sur fond noir.
+
+### Éclairage jour/nuit — `src/rendering/lighting.ts`
+
+- `createSunLight()` : `PointLight` au Soleil (`intensity 2.8`, `decay 0`) → pas d'atténuation en distance, irradiance uniforme → face éclairée nettement distincte de la face sombre sur tous les corps.
+- `DirectionalLight` : fill négligeable (0.04). `ambientIntensity` : 0.02.
+- La géométrie radiale de la `PointLight` produit une séparation jour/nuit physiquement orientée vers le Soleil quel que soit l'orbite.
+
+### Sélection — overlay subtil (dans `src/App.tsx`)
+
+- Suppression de l'`emissive`/`emissiveIntensity` de sélection sur les matériaux de planète et de Lune (provoquait une uniformisation lumineuse et écrasait l'ombre).
+- Surlignage de sélection remplacé par un halo `meshBasicMaterial` `BackSide` additif fin, `depthWrite=false`, autour du corps (planètes, Lune, Soleil).
+- La texture, le relief et la partie sombre du corps sélectionné sont préservés. La logique de sélection et Focus Camera est inchangée.
+
+## Rendu des trajectoires et champ d'étoiles V1.3.1
+
+Ajouté au-dessus de l'architecture existante, sans modification de `src/orbital/`, du système JPL, des textures ni du jour/nuit.
+
+### Trajectoires orbitales — `src/rendering/orbitTrajectory.ts`
+
+- Trajectoires dessinées avec `Line2` + `LineMaterial` (three.js fourni via `three/examples/jsm/lines/`, aucune dépendance externe).
+- Cercle construit dans le plan XZ (cos → x, sin → z), `segments` paramétrable (768 par défaut).
+- `worldUnits = false` : épaisseur en pixels d'écran → lisibilité constante à tous les niveaux de zoom (notamment très éloignés) ; `LineMaterial.onBeforeRender` gère automatiquement la résolution écran.
+- Géométrie et matériau créés une seule fois (via `useMemo`) puis disposés à l'unmount (`disposeOrbitTrajectory`) — aucune allocation dans `useFrame`.
+- `trajectory.ts` enrichi : `TrajectoryVisualConfig` (couleur, `lineWidth`, `opacité`, `brightness`) et `getTrajectoryConfig(bodyId)` — configuration purement visuelle, une couleur par corps conservée sélectionné ou non.
+
+### Intégration composant — `src/App.tsx`
+
+- `OrbitalTrajectory({ radius, bodyId })` : crée/attache la ligne via `<primitive object={line} />`.
+- `OrbitRings` rend les 8 planètes avec `OrbitalTrajectory` (remplace `ringGeometry`).
+- L'anneau orbital lunaire (dans le composant Terre) utilise `OrbitalTrajectory` avec `bodyId="moon"` → couleur distincte de la Terre.
+
+### Champ d'étoiles — `StarField3D` (`src/App.tsx`)
+
+- Ajout d'un attribut de couleur par point (`Float32Array`, `vertexColors`) avec palette : blanc (dominant), bleu très léger, cyan discret, jaune/orange très léger.
+- Distribution aléatoire et naturelle conservée (sphères de rayon 300–800).
+- Tailles (0.15–1.05) et opacité (0.8) réduites pour ne pas dépasser les planètes ni les trajectoires.
+- Fond conservé `#000000`, étoiles non affectées par le fog (`fog={false}`).

@@ -7,6 +7,8 @@
  * - Day/night cycle computation
  * - Material configurations compatibles éclairage
  * - Abstractions réutilisables pour l'apparence 3D
+ * - Visual Scale / Scene Mapping : séparation données astronomiques ↔ scène visuelle
+ * - Texture loading & caching : chargement performant des textures planétaires
  *
  * Ce module ne contient aucune dépendance Three.js au niveau du calcul
  * des orbites. Il ne fait que préparer l'éclairage et les matériaux
@@ -18,5 +20,13 @@
  * effective des lumières et matériaux (dans les composants React).
  */
 
-export type { PlanetRenderData, SunRenderData, PlanetMaterialProps, DayNightConfig } from "./types.ts"
+export type { PlanetRenderData, SunRenderData, PlanetMaterialProps, DayNightConfig, BodyType } from "./types.ts"
 export { createSunLight, isBodyIlluminated, getPlanetMaterialConfig, useSolarLighting } from "./lighting.ts"
+export type { VisualScaleConfig } from "./visualScale.ts"
+export { getVisualScale, setVisualScale, resetVisualScale, mapOrbitalDistanceToVisual, mapBodySizeToVisual, mapOrbitalPositionToVisual, computeVisualScales, DEFAULT_VISUAL_SCALE } from "./visualScale.ts"
+export { loadTexture, getTexture, hasTexture, preloadAllTextures, getMaterialConfig, clearTextureCache, TEXTURE_PATHS } from "./textureLoader.ts"
+export { getRotationAngle } from "./rotation.ts"
+export { createPlanetMesh } from "./planetMesh.ts"
+export { createSunMesh } from "./sunMesh.ts"
+export { TRAJECTORY_COLORS, DEFAULT_TRAJECTORY_COLOR, getTrajectoryColor, getTrajectoryConfig, type TrajectoryVisualConfig } from "./trajectory.ts"
+export { createOrbitTrajectory, disposeOrbitTrajectory, type OrbitTrajectory, type OrbitTrajectoryOptions } from "./orbitTrajectory.ts"

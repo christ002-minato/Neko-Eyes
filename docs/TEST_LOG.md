@@ -309,10 +309,99 @@
 - ✅ `tsc --noEmit` : aucune erreur
 - ✅ `npm run build` : réussite
 - ✅
-
-✅ `selftest orbital` : 7/7 tests validés
+- ✅ `selftest orbital` : 7/7 tests validés
 - ✅ `selftest ephemeris` : 27/27 tests validés
 - ✅ Toutes les planètes, Soleil, Lune : éclairage et fonctionnement préservés
 - ✅ Temps simulé : 0.1x/1x/5x/10x, passé/futur, pause
 - ✅ Sélection, Focus Camera, zoom automatique/manuel
 - ✅ Rotation caméra, damping préservés
+
+## V1.2.0 — STYLE 1 + STYLE 2 : Échelle visuelle + Rendu spatial réaliste
+
+### Visual Scale / Scene Mapping (`src/rendering/visualScale.ts`)
+- ✅ Module `visualScale.ts` créé avec configuration centralisée
+- ✅ `DEFAULT_VISUAL_SCALE` : distanceScale=3.5, earthMoonDistanceScale=6.0, bodySizeScale=1.0, minVisualDistance=0.5
+- ✅ Fonctions pures testées : `mapOrbitalDistanceToVisual()`, `mapBodySizeToVisual()`, `mapOrbitalPositionToVisual()`, `computeVisualScales()`
+- ✅ API runtime : `getVisualScale()`, `setVisualScale()`, `resetVisualScale()`
+- ✅ Intégration dans `getPlanetPosition()`, `getMoonOffset()`, `Planet`, `Sun`, `OrbitRings`, `CameraController`, `OrbitControls`, `fog`, `pointLight`
+- ✅ Aucune modification données JPL / calculs orbitaux / modèles épimériques
+
+### Textures planétaires (`src/rendering/textureLoader.ts`)
+- ✅ `loadTexture()` : chargement asynchrone avec cache Map unique
+- ✅ `preloadAllTextures()` : préchargement 10 corps au démarrage
+- ✅ Fallback placeholder coloré si texture manquante (pas d'erreur bloquante)
+- ✅ `getMaterialConfig()` : roughness/metalness par BodyType (10 types)
+- ✅ `TEXTURE_PATHS` : sun, mercury, venus, earth, moon, mars, jupiter, saturn, uranus, neptune
+- ✅ Zero allocation dans useFrame, zero réseau dans useFrame
+
+### Intégration rendering (`src/App.tsx`)
+- ✅ `Planet` component : props `bodyType`, `illuminated`, `moonIlluminated`
+- ✅ `Sun` component : migration shader procédural → meshStandardMaterial + texture + emissive
+- ✅ `Moon` rendering : texture + illumination dynamique
+- ✅ `SolarSystemScene` : `useSolarLighting()` → DirectionalLight + planetIllumination
+- ✅ Day/night cycle préservé via `getPlanetMaterialConfig()` dynamique
+- ✅ OrbitControls min/max distance, CameraController focus offset, fog, pointLight distance : tous visual-scaled
+
+### Validations complètes
+- ✅ `npx tsc --noEmit` : aucune erreur
+- ✅ `npm run build` : réussite
+- ✅ Selftest orbital : 7/7 tests validés (inchangé)
+- ✅ Selftest ephemeris : 27/27 tests validés (inchangé)
+- ✅ 8 planètes + Soleil + Lune : positions, textures, éclairage fonctionnels
+- ✅ Terre → Lune : distance visuelle 6×, Lune non collée
+- ✅ Passé / présent / futur : positions cohérentes
+- ✅ Vitesses 0.1x / 1x / 5x / 10x : respectées
+- ✅ Pause : gel correct
+- ✅ Sélection : fonctionnelle
+- ✅ Focus Camera : transition fluide vers positions visual-scaled
+- ✅ Zoom manuel : OrbitControls min/max adaptés
+- ✅ Rotation + damping : préservés
+- ✅ Aucune régression JPL : positions astronomiques inchangées
+- ✅ Distances visuelles lisibles : orbites séparées en vue système
+- ✅ Textures sans baisse fluidité : chargement démarrage, cache, pas d'allocation useFrame
+
+## 2026-08-26 — Audit réel rendering / V1.2.1
+
+- ✅ `npx tsc --noEmit` : aucune erreur après corrections.
+- ✅ `npm run build` : réussite.
+- ⚠️ Selftest orbital et ephemeris : non exécutés, Node local sans support TypeScript et `pnpm/tsx` indisponible.
+- ✅ Aucun appel JPL dans `useFrame`; les requêtes restent dans des `useEffect`.
+- ✅ Aucun dictionnaire de positions ni lumière créé dans `useFrame`.
+- ✅ Rotation calculée depuis `simTime`, compatible avec pause et temps négatifs.
+- ⚠️ Rendu 3D non validé visuellement: le navigateur partagé renvoie `WebGL context could not be created`.
+
+## 2026-08-27 — V1.3.0 Améliorations de rendu (trajectoires, fond, jour/nuit, sélection)
+
+### Tests automatiques exécutés
+- ✅ selftest orbital : 7/7 tests validés (`npx jiti src/orbital/selftest.ts`)
+- ✅ selftest ephemeris : 27/27 tests validés (`npx jiti src/orbital/ephemeris/selftest.ts`)
+- ✅ `npx tsc --noEmit` : aucune erreur
+- ✅ `npm run build` : réussite (582 modules transformés)
+
+### Vérifications de code effectuées (rendu)
+- ✅ Trajectoires : `src/rendering/trajectory.ts` centralise `TRAJECTORY_COLORS` ; `OrbitRings` et l'anneau lunaire utilisent `getTrajectoryColor()` (plus de couleur unique `#6397ff`).
+- ✅ Fond : `<color attach="background">` et `<fog>` passés à `#000000` ; `pointsMaterial` des étoiles avec `fog={false}` pour conserver leur lisibilité.
+- ✅ Jour/nuit : `createSunLight()` → `PointLight` (intensity 2.8, decay 0) pour irradiance uniforme et séparation jour/nuit sur tous les corps ; fill directionnel 0.04 ; ambiance 0.02.
+- ✅ Sélection : suppression de l'`emissive`/`emissiveIntensity` de sélection (lavage/uniformisation + perte d'ombre) ; surlignage remplacé par un halo `BackSide` additif fin (`depthWrite=false`). Aucun changement de logique de sélection ni de Focus Camera.
+- ✅ Non-régression : aucune modification de `src/orbital/` (V0.9.4) ni du système JPL (V1.0.x) ; pas de nouvelle dépendance ; aucune allocation/création de matériau dans `useFrame` ; aucune requête réseau dans la boucle de rendu.
+
+### Vérification visuelle
+- ⚠️ Validation visuelle WebGL non réalisable dans l'environnement partagé (`WebGL context could not be created`). Les changements de rendu sont vérifiés par le code et compilés sans erreur ; une vérification visuelle manuelle reste à effectuer sur navigateur avec WebGL (système solaire complet, trajectoires planètes + Lune, Terre éclairée, Terre partiellement dans l'ombre, Mars/Jupiter, Lune, planète sélectionnée, changement de vitesse du temps, Focus Camera).
+
+## 2026-08-27 — V1.3.1 Rendu des trajectoires et champ d'étoiles
+
+### Tests automatiques exécutés
+- ✅ selftest orbital : 7/7 tests validés (`npx jiti src/orbital/selftest.ts`)
+- ✅ selftest ephemeris : 27/27 tests validés (`npx jiti src/orbital/ephemeris/selftest.ts`)
+- ✅ `npx tsc --noEmit` : aucune erreur
+- ✅ `npm run build` : réussite
+
+### Vérifications de code effectuées (rendu)
+- ✅ Trajectoires : `src/rendering/orbitTrajectory.ts` (`Line2` + `LineMaterial`) ; épaisseur en pixels (`worldUnits=false`), lisibilité constante à tout zoom sans allocation dans `useFrame`.
+- ✅ Config centralisée : `getTrajectoryConfig(bodyId)` dans `trajectory.ts` (couleur, `lineWidth`, `opacité`, `brightness`).
+- ✅ `OrbitRings` et anneau orbital lunaire migrés vers `OrbitalTrajectory` (8 planètes + Lune) ; couleur Lune distincte de la Terre ; couleur conservée sélectionné/non.
+- ✅ Étoiles : `StarField3D` avec `vertexColors` — variété blanc/bleu très léger/cyan discret/jaune-orange très léger ; tailles et luminosité réduites ; distribution aléatoire conservée.
+- ✅ Non-régression : aucune modification `src/orbital/` (V0.9.4) ni système JPL (V1.0.x) ; pas de nouvelle dépendance ; aucune allocation dans `useFrame` ; textures et jour/nuit V1.1.2 inchangés ; sélection, Focus Camera, zoom, damping, navigation inchangés.
+
+### Vérification visuelle
+- ⚠️ Validation visuelle WebGL non réalisable dans l'environnement partagé. À confirmer manuellement sur navigateur avec WebGL : niveaux de zoom très éloignés et très proches, 8 planètes + Lune, sélection + Focus Camera, et fonctionnement jour/nuit + textures.

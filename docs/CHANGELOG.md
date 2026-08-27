@@ -228,3 +228,96 @@
 - `selftest orbital` : 7/7 tests validés
 - `selftest ephemeris` : 27/27 tests validés
 - Conservation de toutes les fonctionnalités verrouillées
+
+## V1.2.0 — STYLE 1 + STYLE 2 : Échelle visuelle + Rendu spatial réaliste
+
+- **STYLE 1 — Visual Scale / Scene Mapping** (`src/rendering/visualScale.ts`)
+  - Configuration centralisée du facteur d'échelle visuelle, indépendante des données astronomiques
+  - `distanceScale: 3.5` — distances Soleil → planètes ×3.5 pour lisibilité orbitale
+  - `earthMoonDistanceScale: 6.0` — distance Terre → Lune ×6.0 (Lune détachée visuellement)
+  - `bodySizeScale: 1.0` — tailles des corps décorrelées des distances
+  - `minVisualDistance: 0.5` — garde-fou anti-collision visuelle
+  - Fonctions pures : `mapOrbitalDistanceToVisual()`, `mapBodySizeToVisual()`, `mapOrbitalPositionToVisual()`, `computeVisualScales()`
+  - `getVisualScale()`, `setVisualScale()`, `resetVisualScale()` pour configuration runtime
+  - Aucune modification données JPL, calculs orbitaux V0.9.4, modèles épimériques
+  - Distances visuelles Soleil→planètes nettement plus grandes, orbites distinguables en vue système
+  - Soleil dominant sans écraser les autres corps
+
+- **STYLE 2 — Rendu spatial réaliste** (`src/rendering/textureLoader.ts`, `types.ts`, `App.tsx`)
+  - Infrastructure textures : `preloadAllTextures()` au démarrage, cache `Map<BodyType, THREE.Texture>`, fallback placeholder
+  - `TEXTURE_PATHS` pour 10 corps : sun, mercury, venus, earth, moon, mars, jupiter, saturn, uranus, neptune
+  - `Planet` component : `bodyType?: BodyType`, `illuminated?: boolean`, `moonIlluminated?: boolean`
+  - `Sun` component : migration shader procédural → `meshStandardMaterial` + texture + émission
+  - Matériaux par type via `getMaterialConfig()` (roughness/metalness distincts)
+  - Intégration éclairage V1.1.2 : `useSolarLighting()` → `DirectionalLight` + `planetIllumination` → `getPlanetMaterialConfig()` dynamique
+  - Day/night cycle préservé, compatible textures
+  - Architecture extensible anneaux Saturne (prêt, non implémenté)
+
+- **Architecture respectée** :
+  `JPL/Orbital → position réelle → Visual Scale → Rendering 3D → Textures + éclairage + matériaux → Three.js`
+
+- **Validations** :
+  - `npx tsc --noEmit` : aucune erreur
+  - `npm run build` : réussite
+  - Systèmes LOCKED préservés (CameraController, OrbitControls, TimeControlBar, Focus Camera, sélection, zoom, navigation, rotation, damping)
+  - JPL positions intactes, modèle orbital V0.9.4 inchangé
+  - Pas de régression : selftest orbital 7/7, selftest ephemeris 27/27
+  - Distances visuelles vérifiées : Terre→Lune lisible, orbites planétaires séparées
+  - Textures sans impact fluidité : chargement démarrage, cache, zero allocation useFrame
+
+## Audit rendu et V1.2.1 — Rotation des corps
+
+- Rendu de secours branché sur `defineOrbitalSystem()` et `getBodyPosition()`.
+- Factories `createPlanetMesh()` et `createSunMesh()` ajoutées; la factory solaire est utilisée par `Sun`.
+- Jour/nuit corrigé avec une `PointLight` au Soleil, un fill directionnel faible et une ambiance minimale.
+- `getRotationAngle()` et périodes de rotation ajoutés pour Soleil, planètes et Lune; pause et vitesse reposent sur `simTime`.
+- Offset lunaire JPL branché au rendu.
+- `tsc` et build validés; validation WebGL impossible dans l’environnement partagé.
+
+## V1.3.0 — Améliorations de rendu : trajectoires, fond, jour/nuit, sélection
+
+**Correction et amélioration du rendu 3D, sans toucher aux calculs orbitaux V0.9.4 ni au système JPL V1.0.x.**
+
+### Trajectoires
+- Nouveau module `src/rendering/trajectory.ts` : `TRAJECTORY_COLORS`, `DEFAULT_TRAJECTORY_COLOR`, `getTrajectoryColor()`.
+- Couleurs distinctes et cohérentes par corps (Mercure, Vénus, Terre, Mars, Jupiter, Saturne, Uranus, Neptune, Lune), style NASA : fines, lisibles, élégantes, discrètes.
+- `OrbitRings` et l'anneau orbital lunaire utilisent désormais `getTrajectoryColor()` au lieu de la couleur unique `#6397ff`.
+
+### Fond
+- Fond (et fog) passé de `#010610` à `#000000` : espace proche du noir, sans dominante grise/bleue.
+- Étoiles 3D conservées lisibles : `pointsMaterial fog={false}` (non affectées par le fog).
+
+### Ombres / jour-nuit
+- `createSunLight()` : `PointLight` au Soleil reconfigurée (`intensity 2.8`, `decay 0`) pour une irradiance uniforme quelle que soit la distance → séparation jour/nuit réelle et cohérente sur Terre, Mars, Jupiter, Lune et tous les corps.
+- `DirectionalLight` réduite à un fill négligeable (0.04) ; ambiance minimale (0.02) → face sombre clairement distincte de la face éclairée.
+
+### Sélection
+- Suppression de l'`emissive`/`emissiveIntensity` de sélection qui "lavait" la planète sélectionnée en uniformément lumineuse et écrasait son ombre.
+- Le surlignage de sélection (planètes, Lune, Soleil) devient un overlay subtil : halo `BackSide` additif fin, transparent, `depthWrite=false`, qui ne modifie pas texture, relief ni partie sombre.
+- Aucun changement de logique de sélection ni de Focus Camera.
+
+### Non-régression
+- Les tests passent sans dépendance ajoutée : selftest orbital 7/7, selftest ephemeris 27/27, `tsc --noEmit` (0 erreur), `npm run build` (réussite).
+- Aucune allocation/création de matériau dans `useFrame` ; aucune requête réseau dans la boucle de rendu.
+
+## V1.3.1 — Rendu des trajectoires et du champ d'étoiles
+
+**Affinement du rendu suivant le style V1.3** — trajectoires orbitales plus épaisses/lisibles à tout zoom et champ d'étoiles plus varié. Aucune modification des calculs orbitaux V0.9.4, des données JPL/NASA V1.0.x, ni de CameraController, OrbitControls, TimeControlBar, Focus Camera, sélection, zoom, damping ou navigation. Textures et jour/nuit V1.1.2 inchangés.
+
+### Trajectoires orbitales
+- Nouveau module `src/rendering/orbitTrajectory.ts` : trajectoires dessinées avec `Line2` + `LineMaterial` (three.js fourni, aucune dépendance externe).
+- Épaisseur en pixels d'écran (`worldUnits = false`) : trajectoires visibles et nettes quel que soit le niveau de zoom (notamment très éloigné), avec périmètre automatique ; lisibilité constante à toutes distances sans allocation dans `useFrame`.
+- `trajectory.ts` enrichi : `TrajectoryVisualConfig` (couleur, `lineWidth` en pixels, `opacité`, `brightness`) et `getTrajectoryConfig(bodyId)` — config centralisée par corps.
+- Couleurs distinctes/cohérentes conservées que le corps soit sélectionné ou non ; luminosité augmentée légèrement (opacité ~0.7–0.85) sans effet excessivement lumineux.
+- Trajectoire de la Lune (`#d0d0d0`) distincte de celle de la Terre (`#6ab0e0`), dessinée autour de la Terre.
+- `OrbitRings` et l'anneau orbital lunaire migrent de `ringGeometry` vers `OrbitalTrajectory` (8 planètes + Lune).
+
+### Étoiles / fond
+- Fond conservé proche du noir (`#000000`).
+- `StarField3D` : variété de couleurs (blanc dominant, bleu très léger, cyan discret, jaune/orange très léger) via un attribut de couleur par point (`vertexColors`), distribution naturelle/aléatoire conservée.
+- Tailles et luminosité légèrement réduites pour que les étoiles ne dépassent pas les planètes ni les trajectoires.
+
+### Contraintes respectées
+- Aucune nouvelle dépendance ; réutilisation de l'architecture rendering (`src/rendering/`).
+- Géométries/matériaux créés une seule fois ; aucune allocation ni recalcul dans `useFrame`.
+- Non-régression : selftest orbital 7/7, selftest ephemeris 27/27, `tsc --noEmit` (0 erreur), `npm run build` (réussite).

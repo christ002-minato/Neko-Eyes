@@ -1,4 +1,5 @@
 import * as THREE from "three"
+import type { BodyType } from "./textureLoader.ts"
 
 /**
  * Types de la couche rendering — indépendants de Three.js.
@@ -20,6 +21,8 @@ export interface PlanetRenderData {
   isEarth?: boolean
   /** Indique si c'est la Lune */
   isMoon?: boolean
+  /** Type de corps pour configuration texture/matière */
+  bodyType?: BodyType
 }
 
 export interface SunRenderData {
@@ -29,6 +32,10 @@ export interface SunRenderData {
   radius: number
   /** Couleur du Soleil */
   color: string
+  /** Type de corps pour configuration texture/matière */
+  bodyType?: BodyType
+  /** Rotation period in simulated hours. */
+  rotationPeriod?: number
 }
 
 /** Configuration de matériau de base pour une planète */
@@ -42,7 +49,7 @@ export interface PlanetMaterialProps {
   /** Métallicité (0.0 = non métallique, 1.0 = métallique) */
   metalness?: number
   /** Map de diffuse/albedo (texture) */
-  map?: any
+  map?: THREE.Texture
 }
 
 /** Props transmis au composant Planet pour le rendu */
@@ -62,7 +69,7 @@ export interface PlanetRenderProps {
   /** État de focus */
   isFocusing?: boolean
   /** Type de corps pour configuration matière */
-  bodyType?: keyof PlanetMaterialProps
+  bodyType?: BodyType
 }
 
 /** Props pour le composant Soleil */
@@ -94,3 +101,7 @@ export type PlanetMaterialConfig = {
   roughness: number
   metalness: number
 }
+
+/** Type pour les chemins de textures */
+export type { BodyType }
+export { TEXTURE_PATHS } from "./textureLoader.ts"

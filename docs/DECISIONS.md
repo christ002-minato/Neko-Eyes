@@ -215,3 +215,95 @@
 - **Raison** : assurer une apparence cohérente et réaliste lors de l'activation de l'éclairage, sans modifier les propriétés matérielles de base.
 - **Statut** : active (V1.1.2).
 - **Valeurs prédéfinies** : terre (0.5/0.1 éclairé, 0.9/0.0 ombre), lune (0.8/0.0), mars (0.8/0.0), jupiter (0.6/0.2), saturne (0.7/0.1).
+
+## D34 — Visual Scale / Scene Mapping centralisé V1.2.0
+
+- **Décision** : création d'un module `src/rendering/visualScale.ts` centralisant la conversion données astronomiques → unités scène Three.js, avec facteurs configurables (`distanceScale`, `earthMoonDistanceScale`, `bodySizeScale`, `minVisualDistance`).
+- **Raison** : corriger l'échelle visuelle (distances trop faibles, Lune collée à la Terre) sans toucher aux données JPL ni calculs orbitaux. Séparation tailles ≠ distances. Facteur unique source de vérité.
+- **Statut** : active (V1.2.0).
+- **Configuration par défaut** : `distanceScale: 3.5`, `earthMoonDistanceScale: 6.0`, `bodySizeScale: 1.0`, `minVisualDistance: 0.5`.
+- **Mise en œuvre** : fonctions pures `mapOrbitalDistanceToVisual()`, `mapBodySizeToVisual()`, `mapOrbitalPositionToVisual()`, `computeVisualScales()` ; API runtime `getVisualScale()`, `setVisualScale()`, `resetVisualScale()`.
+- **Intégration** : `getPlanetPosition()`, `getMoonOffset()`, `Planet`, `Sun`, `OrbitRings`, `CameraController`, `OrbitControls`, `fog`, `pointLight` — tous visual-scaled.
+- **Contraintes** : aucune modification `src/orbital/`, `JPLProvider`, `getBodyPosition()`, modèles orbitaux V0.9.4.
+
+## D35 — Textures planétaires performantes V1.2.0
+
+- **Décision** : infrastructure `src/rendering/textureLoader.ts` avec `preloadAllTextures()` au démarrage, cache `Map<BodyType, THREE.Texture>`, fallback placeholder, zéro allocation useFrame, zéro réseau useFrame.
+- **Raison** : rendu astronomique crédible (STYLE 2) avec performance garantie. 10 corps : sun, mercury, venus, earth, moon, mars, jupiter, saturn, uranus, neptune.
+- **Statut** : active (V1.2.0).
+- **Mise en œuvre** : `loadTexture()`, `getTexture()`, `hasTexture()`, `preloadAllTextures()`, `getMaterialConfig()`, `TEXTURE_PATHS`, `clearTextureCache()`.
+- **Fallback** : placeholder CanvasTexture coloré si fichier texture absent — pas d'erreur bloquante, rendu fonctionnel.
+
+## D36 — Sun rendering distinct V1.2.0
+
+- **Décision** : migration Soleil depuis shader GLSL procédural (D11) vers `meshStandardMaterial` + texture + `emissive`/`emissiveIntensity`, conservant corona glow.
+- **Raison** : rendu lumineux distinct des planètes, cohérent avec architecture textures + éclairage V1.1.2. Shader procédural remplacé par texture + emission pour simplicité et performance.
+- **Statut** : active (V1.2.0).
+- **Mise en œuvre** : composant `Sun` utilise `meshStandardMaterial` avec `map={sunTexture}`, `emissive="#ffd700"`, `emissiveIntensity=0.3`, `roughness=0.3`, `metalness=0.1`.
+
+## D37 — Éclairage V1.1.2 intégré aux textures V1.2.0
+
+- **Décision** : `useSolarLighting()` appelé chaque frame dans `SolarSystemScene` → `DirectionalLight` + `planetIllumination` → passé aux `Planet` via prop `illuminated` → `getPlanetMaterialConfig(bodyType, illuminated)` pour roughness/metalness dynamiques jour/nuit.
+- **Raison** : day/night cycle réaliste compatible textures. Matériaux s'adaptent à l'ensoleillement (ex: terre 0.5/0.1 jour, 0.9/0.0 nuit).
+- **Statut** : active (V1.2.0).
+- **Mise en œuvre** : `planetIllumination` calculé via `isBodyIlluminated()` sur positions visual-scaled ; prop `illuminated` sur chaque `Planet` ; `moonIlluminated` pour Lune dans composant Terre.
+
+## D38 — Architecture extensible anneaux Saturne V1.2.0
+
+- **Décision** : composant `Planet` conserve le rendu anneaux Saturne (`ringGeometry` + `meshBasicMaterial`) dans architecture `bodyType` extensible, sans implémentation texture anneaux pour cette étape.
+- **Raison** : préparer l'architecture pour textures anneaux futures (V1.3+) sans bloquer la livraison STYLE 1+2.
+- **Statut** : active (V1.2.0).
+- **Mise en œuvre** : anneaux rendus via `meshBasicMaterial` coloré (existant), prêts à recevoir `map` + texture transparente ultérieurement.
+
+## D39 — Source solaire radiale pour le jour/nuit
+
+- **Décision** : utiliser une `PointLight` au centre du Soleil et conserver une `DirectionalLight` très faible comme fill.
+- **Raison** : une `DirectionalLight` seule projette des rayons parallèles et ne représente pas correctement Soleil → corps pour plusieurs orbites.
+- **Statut** : active après audit du 2026-08-26.
+
+## D40 — Rotation propre pilotée par le temps simulé
+
+- **Décision** : calculer l’angle via `getRotationAngle(simTime, rotationPeriod)` dans `src/rendering/rotation.ts`.
+- **Raison** : une rotation basée sur `delta` ignorait la pause et ne suivait pas correctement le passé/futur.
+- **Corps** : Soleil, Mercure, Vénus, Terre, Mars, Jupiter, Saturne, Uranus, Neptune et Lune.
+- **Statut** : active techniquement; validation visuelle WebGL encore requise.
+
+## D41 — Couleurs de trajectoires centralisées V1.3.0
+
+- **Décision** : créer `src/rendering/trajectory.ts` avec `TRAJECTORY_COLORS` (une couleur distincte/cohérente par corps : 8 planètes + Lune) et `getTrajectoryColor(bodyId)`, utilisés par `OrbitRings` et l'anneau orbital lunaire.
+- **Raison** : rendre chaque trajectoire identifiable tout en restant fine et discrète (approche visuelle NASA) ; centraliser les couleurs dans une configuration réutilisable au lieu d'une valeur codée en dur unique (`#6397ff`).
+- **Statut** : active (V1.3.0).
+- **Contrainte** : aucune modification des calculs orbitaux V0.9.4 ni des positions JPL.
+
+## D42 — Fond spatial proche du noir V1.3.0
+
+- **Décision** : arrière-plan `<color attach="background">` et `fog` passés de `#010610` à `#000000` ; étoiles 3D non affectées par le fog (`fog={false}` sur `pointsMaterial`).
+- **Raison** : éliminer la dominante grise/bleue qui réduisait le contraste avec les corps célestes, tout en conservant une bonne lisibilité des étoiles sur fond noir.
+- **Statut** : active (V1.3.0).
+
+## D43 — Éclairage jour/nuit radial uniforme V1.3.0 (correction de V1.1.2)
+
+- **Décision** : `PointLight` au Soleil reconfigurée (`intensity 2.8`, `decay 0`) pour une irradiance uniforme indépendamment de la distance ; `DirectionalLight` réduite à un fill négligeable (0.04) ; ambiance minimale (0.02).
+- **Raison** : l'implémentation antérieure (fill directionnel quasi nul + point light à forte décroissance) ne produisait pas de séparation jour/nuit réellement visible sur tous les corps. Avec `decay 0`, chaque planète reçoit une irradiance identique côté Soleil → face éclairée nettement distincte de la face sombre (Terre, Mars, Jupiter, Lune et tous les corps).
+- **Statut** : active (V1.3.0).
+- **Contrainte** : a priori préserve l'architecture d'éclairage existante ; aucune modification de `src/orbital/`.
+
+## D44 — Sélection par overlay subtil (pas d'émission) V1.3.0
+
+- **Décision** : supprimer l'`emissive`/`emissiveIntensity` de sélection sur les matériaux de planète et de Lune, et remplacer le surlignage de sélection par un halo `meshBasicMaterial` `BackSide` additif fin (`depthWrite=false`) autour du corps.
+- **Raison** : l'émission uniforme "lavait" la planète sélectionnée (couleur uniformément claire) et écrasait l'ombre jour/nuit. L'overlay additif subtil préserve texture, relief et partie sombre tout en restant un indicateur de sélection visible. La logique de sélection et Focus Camera reste inchangée.
+- **Statut** : active (V1.3.0).
+
+## D45 — Trajectoires orbitales en `Line2`/`LineMaterial` (pixels écran) V1.3.1
+
+- **Décision** : remplacer les anneaux de trajectoire (`ringGeometry`, épaisseur en unités monde qui disparaissait au zoom-out) par des `Line2` + `LineMaterial` avec `worldUnits = false`, soit une épaisseur en pixels d'écran. `getTrajectoryConfig(bodyId)` centralise couleur, `lineWidth`, opacité et brightness par corps.
+- **Raison** : épaisseur en pixels = lisibilité constante à tous les niveaux de zoom, y compris très éloigné, sans recalcul dans `useFrame` (la géométrie est statique ; la résolution écran est gérée automatiquement par `onBeforeRender`). Three.js fournit `three/examples/jsm/lines/` (aucune dépendance externe). La couleur reste attachée au corps, sélectionné ou non.
+- **Conséquences** : 8 planètes + Lune migrées ; `OrbitRings` et l'anneau lunaire ne dépendent plus que d'`OrbitalTrajectory` ; `ringGeometry` orbital supprimé. Les calculs orbitaux (V0.9.4) et JPL (V1.0.x) sont intouchés.
+- **Statut** : active (V1.3.1).
+
+## D46 — Étoiles avec variété de couleurs V1.3.1
+
+- **Décision** : ajouter un attribut de couleur par point (`vertexColors`) au champ d'étoiles avec une palette pondérée — blanc dominant, bleu très léger, cyan discret, jaune/orange très léger — et réduire légèrement tailles/opacité.
+- **Raison** : un ciel peuplé d'étoiles uniquement blanches paraît monotone ; la variété colorée (subtile, sur fond `#000000`) rend le fond plus naturel tout en évitant de distraire des planètes et des trajectoires (tailles/luminosité réduites).
+- **Contexte** : distribution aléatoire sphérique conservée ; les étoiles restent `fog={false}` pour ne pas être atténuées.
+- **Statut** : active (V1.3.1).

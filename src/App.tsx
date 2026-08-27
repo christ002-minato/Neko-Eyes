@@ -4,7 +4,8 @@ import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import nekoLogo from '@/imports/neko_eyer_logo.png'
 import { JPLProvider } from '@/orbital/ephemeris'
-import { useSolarLighting } from "@/rendering"
+import { defineOrbitalSystem, getBodyPosition } from '@/orbital'
+import { useSolarLighting, mapOrbitalDistanceToVisual, mapBodySizeToVisual, mapOrbitalPositionToVisual, loadTexture, getMaterialConfig, getRotationAngle, createPlanetMesh, createSunMesh, getTrajectoryConfig, createOrbitTrajectory, disposeOrbitTrajectory, type BodyType, getPlanetMaterialConfig } from "@/rendering"
 
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -15,6 +16,7 @@ interface Planet {
   radius: number
   orbitRadius: number
   period: number
+  rotationPeriod?: number
   color: string
   glow: string
   type: string
@@ -43,6 +45,7 @@ interface Star {
 
 const SUN: Planet = {
   id: 'sun', name: 'The Sun', radius: 15, orbitRadius: 0, period: 0,
+  rotationPeriod: 609.12,
   color: '#FFD700', glow: 'rgba(255,200,50,0.7)',
   type: 'G-type Main-Sequence Star', distanceAU: 0, moons: 0,
   tempC: '5,500°C (surface)',
@@ -53,6 +56,7 @@ const SUN: Planet = {
 const PLANETS: Planet[] = [
   {
     id: 'mercury', name: 'Mercury', radius: 1.5, orbitRadius: 28, period: 3,
+    rotationPeriod: 1407.6,
     color: '#b0a090', glow: 'rgba(176,160,144,0.4)',
     type: 'Terrestrial', distanceAU: 0.39, moons: 0, tempC: '−180 / +430°C',
     description: 'Smallest planet. Extreme temperature swings, no atmosphere, heavily cratered surface.',
@@ -64,6 +68,7 @@ const PLANETS: Planet[] = [
   },
   {
     id: 'venus', name: 'Venus', radius: 2.5, orbitRadius: 40, period: 7.5,
+    rotationPeriod: -5832.5,
     color: '#FFC649', glow: 'rgba(255,198,73,0.4)',
     type: 'Terrestrial', distanceAU: 0.72, moons: 0, tempC: '+465°C',
     description: 'Hottest planet. Dense CO₂ atmosphere with sulfuric acid clouds trapping heat.',
@@ -75,6 +80,7 @@ const PLANETS: Planet[] = [
   },
   {
     id: 'earth', name: 'Earth', radius: 2.8, orbitRadius: 55, period: 10,
+    rotationPeriod: 23.934,
     color: '#4B9CD3', glow: 'rgba(75,156,211,0.4)',
     type: 'Terrestrial', distanceAU: 1.00, moons: 1, tempC: '−89 / +58°C',
     description: 'The only confirmed harbor of life in the universe. Liquid water, breathable atmosphere.',
@@ -86,6 +92,7 @@ const PLANETS: Planet[] = [
   },
   {
     id: 'mars', name: 'Mars', radius: 2, orbitRadius: 70, period: 18.8,
+    rotationPeriod: 24.623,
     color: '#C1440E', glow: 'rgba(193,68,14,0.4)',
     type: 'Terrestrial', distanceAU: 1.52, moons: 2, tempC: '−125 / +20°C',
     description: 'Red planet home to Olympus Mons, the tallest volcano in the Solar System at 21 km.',
@@ -97,6 +104,7 @@ const PLANETS: Planet[] = [
   },
   {
     id: 'jupiter', name: 'Jupiter', radius: 6, orbitRadius: 95, period: 50,
+    rotationPeriod: 9.925,
     color: '#C88B3A', glow: 'rgba(200,139,58,0.4)',
     type: 'Gas Giant', distanceAU: 5.20, moons: 95, tempC: '−110°C',
     description: 'Largest planet. The Great Red Spot is a storm raging continuously for over 350 years.',
@@ -108,6 +116,7 @@ const PLANETS: Planet[] = [
   },
   {
     id: 'saturn', name: 'Saturn', radius: 5, orbitRadius: 120, period: 120,
+    rotationPeriod: 10.656,
     color: '#FAD5A5', glow: 'rgba(250,213,165,0.4)',
     type: 'Gas Giant', distanceAU: 9.58, moons: 146, tempC: '−140°C',
     description: 'Iconic ring system spanning 280,000 km. Less dense than water.',
@@ -119,6 +128,7 @@ const PLANETS: Planet[] = [
   },
   {
     id: 'uranus', name: 'Uranus', radius: 3.5, orbitRadius: 145, period: 250,
+    rotationPeriod: -17.24,
     color: '#7DE8E8', glow: 'rgba(125,232,232,0.35)',
     type: 'Ice Giant', distanceAU: 19.22, moons: 28, tempC: '−224°C',
     description: 'Rotates on its side at 98°. Faint rings, blue-green methane atmosphere.',
@@ -130,6 +140,7 @@ const PLANETS: Planet[] = [
   },
   {
     id: 'neptune', name: 'Neptune', radius: 3.2, orbitRadius: 168, period: 500,
+    rotationPeriod: 16.11,
     color: '#4B70DD', glow: 'rgba(75,112,221,0.35)',
     type: 'Ice Giant', distanceAU: 30.05, moons: 16, tempC: '−214°C',
     description: 'Strongest winds in the Solar System — 2,100 km/h. Has a Great Dark Spot storm.',
@@ -141,6 +152,7 @@ const PLANETS: Planet[] = [
   },
   {
     id: 'moon', name: 'The Moon', radius: 0.8, orbitRadius: 7, period: 2.7,
+    rotationPeriod: 655.72,
     color: '#C0C0C0', glow: 'rgba(192,192,192,0.3)',
     type: 'Natural Satellite', distanceAU: 0.00257, moons: 0, tempC: '−173 / +127°C',
     description: 'Earth\'s only natural satellite. Its gravitational pull creates tides on Earth.',
@@ -152,21 +164,38 @@ const PLANETS: Planet[] = [
   },
 ]
 
+const ORBITAL_BODIES = defineOrbitalSystem(PLANETS.map((planet) => ({
+  id: planet.id,
+  orbitalRadius: planet.orbitRadius,
+  orbitalPeriod: planet.period,
+  phase: planet.initialOffset * Math.PI * 2,
+  rotationPeriod: planet.rotationPeriod,
+  parentId: planet.parentId,
+  eccentricity: planet.eccentricity,
+  inclination: planet.inclination,
+  nodeLongitude: planet.nodeLongitude,
+})))
+const ORBITAL_BODY_BY_ID = new Map(ORBITAL_BODIES.map((body) => [body.id, body]))
+
 function getPlanetPosition(p: Planet, time: number): [number, number, number] {
   if (p.id === 'sun') return [0, 0, 0]
   if (p.id === 'moon') return [0, 0, 0]
-  const angle = (time / p.period) * Math.PI * 2 + p.initialOffset * Math.PI * 2
-  return [Math.cos(angle) * p.orbitRadius, 0, Math.sin(angle) * p.orbitRadius]
+  const body = ORBITAL_BODY_BY_ID.get(p.id)
+  if (!body) return [0, 0, 0]
+  return mapOrbitalPositionToVisual(getBodyPosition(body, time))
 }
 
 function getMoonOffset(time: number): [number, number, number] {
-  const moonData = PLANETS.find(p => p.id === 'moon')!
-  const angle = (time / moonData.period) * Math.PI * 2
-  return [
-    Math.cos(angle) * moonData.orbitRadius,
-    0,
-    Math.sin(angle) * moonData.orbitRadius,
-  ]
+  const moon = ORBITAL_BODY_BY_ID.get('moon')
+  const earth = ORBITAL_BODY_BY_ID.get('earth')
+  if (!moon || !earth) return [0, 0, 0]
+  const moonPosition = getBodyPosition(moon, time)
+  const earthPosition = getBodyPosition(earth, time)
+  return mapOrbitalPositionToVisual([
+    moonPosition[0] - earthPosition[0],
+    moonPosition[1] - earthPosition[1],
+    moonPosition[2] - earthPosition[2],
+  ], true)
 }
 
 // ── 3D Scene Components ───────────────────────────────────────────────────────
@@ -205,10 +234,12 @@ function CameraController({
       lerpProgress.current = Math.min(lerpProgress.current + 0.018, 1)
       const t = lerpProgress.current * lerpProgress.current * (3 - 2 * lerpProgress.current)
 
+      const focusOffset = mapBodySizeToVisual(15)
+      const focusHeight = mapBodySizeToVisual(10)
       const targetPos = new THREE.Vector3(
-        focusPosition[0] + 15,
-        10,
-        focusPosition[2] + 15,
+        focusPosition[0] + focusOffset,
+        focusHeight,
+        focusPosition[2] + focusOffset,
       )
       camera.position.lerpVectors(prevCameraPos.current, targetPos, t)
       const lookTarget = new THREE.Vector3(focusPosition[0], focusPosition[1], focusPosition[2])
@@ -226,83 +257,40 @@ function CameraController({
 }
 
 function Sun({
+  time,
   selectedId,
   onSelect,
 }: {
+  time: number
   selectedId: string | null
   onSelect: (p: Planet) => void
 }) {
   const meshRef = useRef<THREE.Mesh>(null)
-  const materialRef = useRef<THREE.ShaderMaterial>(null)
   const isSelected = selectedId === 'sun'
+  const [sunTexture, setSunTexture] = useState<THREE.Texture | null>(null)
+  const sunMaterialConfig = useMemo(() => getMaterialConfig("sun"), [])
 
-  const uniforms = useMemo(() => ({
-    uTime: { value: 0 },
-    uColor1: { value: new THREE.Color('#fff5a0') },
-    uColor2: { value: new THREE.Color('#ffd700') },
-    uColor3: { value: new THREE.Color('#ff8c00') },
-  }), [])
+  useEffect(() => {
+    loadTexture("sun").then(setSunTexture)
+  }, [])
 
   useFrame((_, delta) => {
-    if (materialRef.current) {
-      materialRef.current.uniforms.uTime.value += delta
-    }
     if (meshRef.current) {
-      meshRef.current.rotation.y += delta * 0.1
+      meshRef.current.rotation.y = getRotationAngle(time, SUN.rotationPeriod ?? 0)
     }
   })
 
-  const vertexShader = `
-    varying vec2 vUv;
-    varying vec3 vNormal;
-    void main() {
-      vUv = uv;
-      vNormal = normalize(normalMatrix * normal);
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }
-  `
-
-  const fragmentShader = `
-    uniform float uTime;
-    uniform vec3 uColor1;
-    uniform vec3 uColor2;
-    uniform vec3 uColor3;
-    varying vec2 vUv;
-    varying vec3 vNormal;
-
-    float hash(vec2 p) {
-      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-    }
-
-    float noise(vec2 p) {
-      vec2 i = floor(p);
-      vec2 f = fract(p);
-      f = f * f * (3.0 - 2.0 * f);
-      float a = hash(i);
-      float b = hash(i + vec2(1.0, 0.0));
-      float c = hash(i + vec2(0.0, 1.0));
-      float d = hash(i + vec2(1.0, 1.0));
-      return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-    }
-
-    void main() {
-      vec2 uv = vUv * 4.0;
-      float n = noise(uv + uTime * 0.3) * 0.5 +
-                noise(uv * 2.0 - uTime * 0.2) * 0.25 +
-                noise(uv * 4.0 + uTime * 0.1) * 0.125;
-      vec3 color = mix(uColor1, uColor2, n);
-      color = mix(color, uColor3, n * n);
-      float fresnel = pow(1.0 - abs(dot(vNormal, vec3(0.0, 0.0, 1.0))), 1.5);
-      color += fresnel * uColor3 * 0.3;
-      gl_FragColor = vec4(color, 1.0);
-    }
-  `
+  const visualSunRadius = mapBodySizeToVisual(SUN.radius)
+  const sunMesh = useMemo(() => createSunMesh({ position: [0, 0, 0], radius: visualSunRadius, color: SUN.color, bodyType: "sun" }, {
+    color: "#fff5a0", emissive: "#ffd700", emissiveIntensity: 0.3,
+    roughness: sunMaterialConfig.roughness, metalness: sunMaterialConfig.metalness, map: sunTexture ?? undefined,
+  }), [sunTexture, sunMaterialConfig, visualSunRadius])
 
   return (
     <group>
       {/* Corona glow */}
       <mesh>
-        <sphereGeometry args={[22, 32, 32]} />
+        <sphereGeometry args={[mapBodySizeToVisual(22), 32, 32]} />
         <meshBasicMaterial
           color="#ffaa00"
           transparent
@@ -311,7 +299,7 @@ function Sun({
         />
       </mesh>
       <mesh>
-        <sphereGeometry args={[18, 32, 32]} />
+        <sphereGeometry args={[mapBodySizeToVisual(18), 32, 32]} />
         <meshBasicMaterial
           color="#ffcc44"
           transparent
@@ -321,32 +309,27 @@ function Sun({
       </mesh>
       {/* Selection glow */}
       {isSelected && (
-        <mesh>
-          <sphereGeometry args={[SUN.radius * 1.3, 32, 32]} />
+        <mesh scale={1.03}>
+          <sphereGeometry args={[mapBodySizeToVisual(SUN.radius), 32, 32]} />
           <meshBasicMaterial
             color="#00d8ff"
             transparent
-            opacity={0.12}
+            opacity={0.2}
             side={THREE.BackSide}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
           />
         </mesh>
       )}
       {/* Sun sphere */}
-      <mesh
+      <primitive
+        object={sunMesh}
         ref={meshRef}
-        onPointerDown={(e) => {
+        onPointerDown={(e: { stopPropagation: () => void }) => {
           e.stopPropagation()
           onSelect(SUN)
         }}
-      >
-        <sphereGeometry args={[SUN.radius, 64, 64]} />
-        <shaderMaterial
-          ref={materialRef}
-          vertexShader={vertexShader}
-          fragmentShader={fragmentShader}
-          uniforms={uniforms}
-        />
-      </mesh>
+      />
       {/* Invisible hitbox for easier clicking/touch */}
       <mesh
         onPointerDown={(e) => {
@@ -354,7 +337,7 @@ function Sun({
           onSelect(SUN)
         }}
       >
-        <sphereGeometry args={[SUN.radius * 1.5, 8, 8]} />
+        <sphereGeometry args={[mapBodySizeToVisual(SUN.radius * 1.5), 8, 8]} />
         <meshBasicMaterial transparent opacity={0} />
       </mesh>
     </group>
@@ -369,6 +352,10 @@ function Planet({
   selectedMoon,
   onSelectMoon,
   positionOverride,
+  moonPositionOverride,
+  bodyType,
+  illuminated,
+  moonIlluminated,
 }: {
   planet: Planet
   time: number
@@ -377,23 +364,55 @@ function Planet({
   selectedMoon: boolean
   onSelectMoon: () => void
   positionOverride?: [number, number, number]
+  moonPositionOverride?: [number, number, number] | null
+  bodyType?: BodyType
+  illuminated?: boolean
+  moonIlluminated?: boolean
 }) {
   const meshRef = useRef<THREE.Mesh>(null)
   const moonMeshRef = useRef<THREE.Mesh>(null)
   const isSelected = selectedId === planet.id
 
+  const [texture, setTexture] = useState<THREE.Texture | null>(null)
+  const materialConfig = useMemo(() => {
+    if (bodyType && illuminated !== undefined) {
+      return getPlanetMaterialConfig(bodyType, illuminated)
+    }
+    return bodyType ? getMaterialConfig(bodyType) : { roughness: 0.7, metalness: 0.1 }
+  }, [bodyType, illuminated])
+
+  useEffect(() => {
+    if (bodyType) {
+      loadTexture(bodyType).then(setTexture)
+    }
+  }, [bodyType])
+
   useFrame((_, delta) => {
     if (meshRef.current) {
-      meshRef.current.rotation.y += delta * (0.5 / Math.max(planet.period, 0.5))
+      meshRef.current.rotation.y = getRotationAngle(time, planet.rotationPeriod ?? 0)
     }
     if (moonMeshRef.current) {
-      moonMeshRef.current.rotation.y += delta * 0.3
+      moonMeshRef.current.rotation.y = getRotationAngle(time, moonData.rotationPeriod ?? 0)
     }
   })
 
-  const pos = getPlanetPosition(planet, time)
-  const moonOffset = planet.id === 'earth' ? getMoonOffset(time) : [0, 0, 0] as [number, number, number]
+  const visualRadius = mapBodySizeToVisual(planet.radius)
+  const pos = positionOverride ? mapOrbitalPositionToVisual(positionOverride) : getPlanetPosition(planet, time)
+  const moonOffset = planet.id === 'earth'
+    ? moonPositionOverride
+      ? mapOrbitalPositionToVisual(moonPositionOverride, true)
+      : getMoonOffset(time)
+    : [0, 0, 0] as [number, number, number]
   const moonData = PLANETS.find(p => p.id === 'moon')!
+  const visualMoonRadius = mapBodySizeToVisual(moonData.radius)
+  const visualMoonOrbitRadius = mapOrbitalDistanceToVisual(moonData.orbitRadius, true)
+
+  const [moonTexture, setMoonTexture] = useState<THREE.Texture | null>(null)
+  const moonMaterialConfig = useMemo(() => getMaterialConfig("moon"), [])
+
+  useEffect(() => {
+    loadTexture("moon").then(setMoonTexture)
+  }, [])
 
   const gradientColors = useMemo(() => {
     if (planet.id === 'earth') return { c1: '#7dd4f6', c2: planet.color, c3: '#2e7a2c' }
@@ -402,24 +421,33 @@ function Planet({
     return { c1: planet.color + 'cc', c2: planet.color, c3: planet.color + '77' }
   }, [planet])
 
+  const materialProps = useMemo(() => ({
+    color: gradientColors.c2,
+    emissive: new THREE.Color(0x000000),
+    emissiveIntensity: 0,
+    roughness: materialConfig.roughness,
+    metalness: materialConfig.metalness,
+    map: texture ?? undefined,
+  }), [gradientColors, materialConfig, texture])
+  const planetMesh = useMemo(() => createPlanetMesh({
+    position: [0, 0, 0],
+    radius: visualRadius,
+    color: planet.color,
+    bodyId: planet.id,
+    bodyType,
+  }, materialProps), [bodyType, materialProps, planet.color, planet.id, visualRadius])
+
   return (
     <group position={pos}>
       <group ref={meshRef}>
-        <mesh
-          onPointerDown={(e) => {
+        <primitive
+          object={planetMesh}
+          ref={meshRef}
+          onPointerDown={(e: { stopPropagation: () => void }) => {
             e.stopPropagation()
             onSelect(planet)
           }}
-        >
-          <sphereGeometry args={[planet.radius, 32, 32]} />
-          <meshStandardMaterial
-            color={gradientColors.c2}
-            emissive={gradientColors.c2}
-            emissiveIntensity={isSelected ? 0.6 : 0.15}
-            roughness={0.7}
-            metalness={0.1}
-          />
-        </mesh>
+        />
         {/* Invisible hitbox for easier clicking */}
         <mesh
           onPointerDown={(e) => {
@@ -427,17 +455,19 @@ function Planet({
             onSelect(planet)
           }}
         >
-          <sphereGeometry args={[planet.radius * 1.5, 8, 8]} />
+          <sphereGeometry args={[visualRadius * 1.5, 8, 8]} />
           <meshBasicMaterial transparent opacity={0} />
         </mesh>
         {isSelected && (
-          <mesh>
-            <sphereGeometry args={[planet.radius * 1.35, 32, 32]} />
+          <mesh scale={1.04}>
+            <sphereGeometry args={[visualRadius, 32, 32]} />
             <meshBasicMaterial
               color="#00d8ff"
               transparent
-              opacity={0.12}
+              opacity={0.2}
               side={THREE.BackSide}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
             />
           </mesh>
         )}
@@ -445,7 +475,7 @@ function Planet({
       {/* Saturn rings */}
       {planet.id === 'saturn' && (
         <mesh rotation={[Math.PI / 2.5, 0, 0]}>
-          <ringGeometry args={[planet.radius * 1.3, planet.radius * 2.2, 64]} />
+          <ringGeometry args={[visualRadius * 1.3, visualRadius * 2.2, 64]} />
           <meshBasicMaterial
             color={planet.color}
             transparent
@@ -459,7 +489,7 @@ function Planet({
         <group>
           {/* Atmosphere glow */}
           <mesh>
-            <sphereGeometry args={[planet.radius * 1.15, 32, 32]} />
+            <sphereGeometry args={[visualRadius * 1.15, 32, 32]} />
             <meshBasicMaterial
               color="#4B9CD3"
               transparent
@@ -472,16 +502,8 @@ function Planet({
       {/* Moon around Earth */}
       {planet.id === 'earth' && (
         <>
-          {/* Moon orbit ring */}
-          <mesh rotation={[Math.PI / 2, 0, 0]}>
-            <ringGeometry args={[moonData.orbitRadius - 0.05, moonData.orbitRadius + 0.05, 128]} />
-            <meshBasicMaterial
-              color="#6397ff"
-              transparent
-              opacity={0.05}
-              side={THREE.DoubleSide}
-            />
-          </mesh>
+          {/* Moon orbit trajectory */}
+          <OrbitalTrajectory radius={visualMoonOrbitRadius} bodyId="moon" />
           <group position={moonOffset}>
           <group ref={moonMeshRef}>
             <mesh
@@ -490,13 +512,14 @@ function Planet({
                 onSelectMoon()
               }}
             >
-              <sphereGeometry args={[moonData.radius, 16, 16]} />
+              <sphereGeometry args={[visualMoonRadius, 16, 16]} />
               <meshStandardMaterial
                 color={moonData.color}
-                emissive={moonData.color}
-                emissiveIntensity={selectedId === 'moon' ? 0.5 : 0.1}
-                roughness={0.9}
-                metalness={0.05}
+                emissive={new THREE.Color(0x000000)}
+                emissiveIntensity={0}
+                roughness={moonIlluminated ? (moonMaterialConfig.roughness) : 0.9}
+                metalness={moonIlluminated ? (moonMaterialConfig.metalness) : 0.05}
+                map={moonTexture ?? undefined}
               />
             </mesh>
             <mesh
@@ -505,17 +528,19 @@ function Planet({
                 onSelectMoon()
               }}
             >
-              <sphereGeometry args={[moonData.radius * 2, 8, 8]} />
+              <sphereGeometry args={[visualMoonRadius * 2, 8, 8]} />
               <meshBasicMaterial transparent opacity={0} />
             </mesh>
             {selectedId === 'moon' && (
-              <mesh>
-                <sphereGeometry args={[moonData.radius * 1.5, 16, 16]} />
+              <mesh scale={1.06}>
+                <sphereGeometry args={[visualMoonRadius, 16, 16]} />
                 <meshBasicMaterial
                   color="#00d8ff"
                   transparent
-                  opacity={0.15}
+                  opacity={0.22}
                   side={THREE.BackSide}
+                  blending={THREE.AdditiveBlending}
+                  depthWrite={false}
                 />
               </mesh>
             )}
@@ -527,20 +552,30 @@ function Planet({
   )
 }
 
-function OrbitRings({ time }: { time: number }) {
+function OrbitalTrajectory({ radius, bodyId }: { radius: number; bodyId: string }) {
+  const trajectory = useMemo(() => {
+    const config = getTrajectoryConfig(bodyId)
+    return createOrbitTrajectory({
+      radius,
+      color: config.color,
+      lineWidth: config.lineWidth,
+      opacity: Math.min(config.brightness * config.opacity, 1),
+      segments: 768,
+    })
+  }, [radius, bodyId])
+
+  useEffect(() => () => disposeOrbitTrajectory(trajectory), [trajectory])
+
+  return <primitive object={trajectory.line} />
+}
+
+function OrbitRings() {
   return (
     <group>
-      {PLANETS.filter(p => p.id !== 'moon').map((p) => (
-        <mesh key={`ring-${p.id}`} rotation={[Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[p.orbitRadius - 0.08, p.orbitRadius + 0.08, 128]} />
-          <meshBasicMaterial
-            color="#6397ff"
-            transparent
-            opacity={0.07}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-      ))}
+      {PLANETS.filter(p => p.id !== 'moon').map((p) => {
+        const visualOrbitRadius = mapOrbitalDistanceToVisual(p.orbitRadius)
+        return <OrbitalTrajectory key={`traj-${p.id}`} radius={visualOrbitRadius} bodyId={p.id} />
+      })}
     </group>
   )
 }
@@ -562,7 +597,41 @@ function StarField3D({ count = 4000 }: { count?: number }) {
   const sizes = useMemo(() => {
     const arr = new Float32Array(count)
     for (let i = 0; i < count; i++) {
-      arr[i] = Math.random() * 1.2 + 0.2
+      arr[i] = Math.random() * 0.9 + 0.15
+    }
+    return arr
+  }, [count])
+
+  const colors = useMemo(() => {
+    const arr = new Float32Array(count * 3)
+    const palette = [
+      [1.0, 1.0, 1.0], // blanc (dominant)
+      [0.94, 0.97, 1.0], // bleu très léger
+      [0.88, 0.98, 0.98], // cyan discret
+      [1.0, 0.94, 0.82], // jaune/orange très léger
+    ]
+    const weights = [0.68, 0.13, 0.10, 0.09]
+    const total = weights.reduce((a, b) => a + b, 0)
+    const cumulative: number[] = []
+    let acc = 0
+    for (const w of weights) {
+      acc += w / total
+      cumulative.push(acc)
+    }
+    for (let i = 0; i < count; i++) {
+      const rnd = Math.random()
+      let idx = 0
+      for (let j = 0; j < cumulative.length; j++) {
+        if (rnd <= cumulative[j]) {
+          idx = j
+          break
+        }
+      }
+      const c = palette[idx]
+      const dim = 0.6 + Math.random() * 0.4
+      arr[i * 3 + 0] = c[0] * dim
+      arr[i * 3 + 1] = c[1] * dim
+      arr[i * 3 + 2] = c[2] * dim
     }
     return arr
   }, [count])
@@ -578,14 +647,20 @@ function StarField3D({ count = 4000 }: { count?: number }) {
           attach="attributes-size"
           args={[sizes, 1]}
         />
+        <bufferAttribute
+          attach="attributes-color"
+          args={[colors, 3]}
+        />
       </bufferGeometry>
       <pointsMaterial
         color="#ffffff"
+        vertexColors
         size={0.8}
         transparent
-        opacity={0.85}
+        opacity={0.8}
         sizeAttenuation
         depthWrite={false}
+        fog={false}
       />
     </points>
   )
@@ -643,7 +718,41 @@ function SolarSystemScene({
     if (frameCount.current % 6 === 0) {
       onTimeUpdate(timeRef.current)
     }
+
   })
+
+  const jplPositions: Record<string, [number, number, number] | null | undefined> = {
+    earth: jplEarthPosition,
+    mercury: jplMercuryPosition,
+    venus: jplVenusPosition,
+    mars: jplMarsPosition,
+    jupiter: jplJupiterPosition,
+    saturn: jplSaturnPosition,
+    uranus: jplUranusPosition,
+    neptune: jplNeptunePosition,
+  }
+  const planetPositions: Record<string, [number, number, number]> = { sun: [0, 0, 0] }
+  for (const planet of PLANETS) {
+    if (planet.id === 'sun' || planet.id === 'moon') continue
+    const jplPosition = jplPositions[planet.id]
+    planetPositions[planet.id] = jplPosition
+      ? mapOrbitalPositionToVisual(jplPosition)
+      : getPlanetPosition(planet, timeRef.current)
+  }
+  const earthPosition = planetPositions.earth
+  const moonOffset = jplMoonPosition
+    ? mapOrbitalPositionToVisual(jplMoonPosition, true)
+    : getMoonOffset(timeRef.current)
+  planetPositions.moon = [
+    earthPosition[0] + moonOffset[0],
+    earthPosition[1] + moonOffset[1],
+    earthPosition[2] + moonOffset[2],
+  ]
+
+  const { light: sunLight, pointLight, dayNightConfig, planetIllumination } = useSolarLighting(
+    [0, 0, 0],
+    planetPositions,
+  )
 
   const handleSelectMoon = useCallback(() => {
     const moon = PLANETS.find(p => p.id === 'moon')!
@@ -652,11 +761,12 @@ function SolarSystemScene({
 
   return (
     <>
-      <color attach="background" args={['#010610']} />
-      <fog attach="fog" args={['#010610', 200, 600]} />
+      <color attach="background" args={['#000000']} />
+      <fog attach="fog" args={['#000000', mapOrbitalDistanceToVisual(200), mapOrbitalDistanceToVisual(600)]} />
 
-      <ambientLight intensity={0.15} />
-      <pointLight position={[0, 0, 0]} intensity={2.5} distance={400} color="#fff5cc" />
+      <ambientLight intensity={dayNightConfig.ambientIntensity} />
+      <primitive object={sunLight} />
+      <primitive object={pointLight} />
 
       <CameraController
         focusTarget={focusTarget}
@@ -671,8 +781,8 @@ function SolarSystemScene({
         makeDefault
         enableDamping
         dampingFactor={0.08}
-        minDistance={15}
-        maxDistance={350}
+        minDistance={mapBodySizeToVisual(15)}
+        maxDistance={mapOrbitalDistanceToVisual(350)}
         maxPolarAngle={Math.PI * 0.85}
         minPolarAngle={Math.PI * 0.1}
         rotateSpeed={0.5}
@@ -680,6 +790,7 @@ function SolarSystemScene({
       />
 
       <Sun
+        time={timeRef.current}
         selectedId={selectedPlanet?.id ?? null}
         onSelect={onSelectPlanet}
       />
@@ -696,6 +807,10 @@ function SolarSystemScene({
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
               positionOverride={jplEarthPosition}
+              moonPositionOverride={jplMoonPosition}
+              bodyType="earth"
+              illuminated={planetIllumination.earth}
+              moonIlluminated={planetIllumination.moon}
             />
           )
         }
@@ -710,6 +825,8 @@ function SolarSystemScene({
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
               positionOverride={jplMercuryPosition}
+              bodyType="mercury"
+              illuminated={planetIllumination.mercury}
             />
           )
         }
@@ -724,6 +841,8 @@ function SolarSystemScene({
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
               positionOverride={jplVenusPosition}
+              bodyType="venus"
+              illuminated={planetIllumination.venus}
             />
           )
         }
@@ -738,6 +857,8 @@ function SolarSystemScene({
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
               positionOverride={jplMarsPosition}
+              bodyType="mars"
+              illuminated={planetIllumination.mars}
             />
           )
         }
@@ -752,6 +873,8 @@ function SolarSystemScene({
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
               positionOverride={jplJupiterPosition}
+              bodyType="jupiter"
+              illuminated={planetIllumination.jupiter}
             />
           )
         }
@@ -766,6 +889,8 @@ function SolarSystemScene({
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
               positionOverride={jplSaturnPosition}
+              bodyType="saturn"
+              illuminated={planetIllumination.saturn}
             />
           )
         }
@@ -780,6 +905,8 @@ function SolarSystemScene({
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
               positionOverride={jplUranusPosition}
+              bodyType="uranus"
+              illuminated={planetIllumination.uranus}
             />
           )
         }
@@ -794,6 +921,8 @@ function SolarSystemScene({
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
               positionOverride={jplNeptunePosition}
+              bodyType="neptune"
+              illuminated={planetIllumination.neptune}
             />
           )
         }
@@ -806,11 +935,14 @@ function SolarSystemScene({
             onSelect={onSelectPlanet}
             selectedMoon={selectedPlanet?.id === 'moon'}
             onSelectMoon={handleSelectMoon}
+            moonPositionOverride={p.id === 'earth' ? jplMoonPosition : undefined}
+            bodyType={p.id as BodyType}
+            illuminated={planetIllumination[p.id as keyof typeof planetIllumination]}
           />
         )
       })}
 
-      <OrbitRings time={timeRef.current} />
+      <OrbitRings />
       <StarField3D count={4000} />
     </>
   )
@@ -1400,7 +1532,8 @@ function ExplorerSection() {
 
   const handleFocus = useCallback(() => {
     if (!selectedPlanet) return
-    let pos = getPlanetPosition(selectedPlanet, simTime)
+    let pos: [number, number, number]
+
     if (selectedPlanet.id === 'moon') {
       const earthPos = getPlanetPosition(
         PLANETS.find(p => p.id === 'earth')!,
@@ -1412,11 +1545,30 @@ function ExplorerSection() {
         earthPos[1] + moonOff[1],
         earthPos[2] + moonOff[2],
       ]
+    } else if (selectedPlanet.id === 'earth' && jplEarthPosition) {
+      pos = mapOrbitalPositionToVisual(jplEarthPosition)
+    } else if (selectedPlanet.id === 'mercury' && jplMercuryPosition) {
+      pos = mapOrbitalPositionToVisual(jplMercuryPosition)
+    } else if (selectedPlanet.id === 'venus' && jplVenusPosition) {
+      pos = mapOrbitalPositionToVisual(jplVenusPosition)
+    } else if (selectedPlanet.id === 'mars' && jplMarsPosition) {
+      pos = mapOrbitalPositionToVisual(jplMarsPosition)
+    } else if (selectedPlanet.id === 'jupiter' && jplJupiterPosition) {
+      pos = mapOrbitalPositionToVisual(jplJupiterPosition)
+    } else if (selectedPlanet.id === 'saturn' && jplSaturnPosition) {
+      pos = mapOrbitalPositionToVisual(jplSaturnPosition)
+    } else if (selectedPlanet.id === 'uranus' && jplUranusPosition) {
+      pos = mapOrbitalPositionToVisual(jplUranusPosition)
+    } else if (selectedPlanet.id === 'neptune' && jplNeptunePosition) {
+      pos = mapOrbitalPositionToVisual(jplNeptunePosition)
+    } else {
+      pos = getPlanetPosition(selectedPlanet, simTime)
     }
+
     setFocusTarget(selectedPlanet.id)
     setFocusPosition(pos)
     setIsFocusing(true)
-  }, [selectedPlanet, simTime])
+  }, [selectedPlanet, simTime, jplEarthPosition, jplMercuryPosition, jplVenusPosition, jplMarsPosition, jplJupiterPosition, jplSaturnPosition, jplUranusPosition, jplNeptunePosition])
 
   const handleTransitionDone = useCallback(() => {
     setIsFocusing(false)
@@ -1485,7 +1637,7 @@ function ExplorerSection() {
         provider.getState('neptune', simTime),
       ]
       const results = await Promise.all(promises)
-      
+
       if (results[0] && results[0].position) {
         setJplMercuryPosition([results[0].position[0] * 55, results[0].position[1] * 55, results[0].position[2] * 55])
       }
