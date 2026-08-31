@@ -307,3 +307,40 @@
 - **Raison** : un ciel peuplé d'étoiles uniquement blanches paraît monotone ; la variété colorée (subtile, sur fond `#000000`) rend le fond plus naturel tout en évitant de distraire des planètes et des trajectoires (tailles/luminosité réduites).
 - **Contexte** : distribution aléatoire sphérique conservée ; les étoiles restent `fog={false}` pour ne pas être atténuées.
 - **Statut** : active (V1.3.1).
+
+## D47 — Correction de la projection texture et de l'anneau Saturne V1.3.2
+
+- **Décision** : corriger le chargement des textures en forçant `ClampToEdgeWrapping`, `repeat = 1` et `offset = 0`, et remplacer le rendu Saturne par une géométrie annulaire réelle plus réaliste avec texture de bandes.
+- **Raison** : l'ancien rendu déformait les images sur les sphères (répétition/étirement) et les anneaux Saturne restaient trop proches d'un disque opaque générique. Le but est de conserver la structure existante tout en améliorant la fidélité visuelle.
+- **Statut** : active (V1.3.2).
+- **Mise en œuvre** : `src/rendering/textureLoader.ts` et `src/App.tsx` (composant `SaturnRings`).
+
+## Décision — Assets 3D réels (NASA / JPL / USGS)
+
+- **Décision** : ajouter un attribut de couleur par point (`vertexColors`) au champ d'étoiles avec une palette pondérée — blanc dominant, bleu très léger, cyan discret, jaune/orange très léger — et réduire légèrement tailles/opacité.
+- **Raison** : un ciel peuplé d'étoiles uniquement blanches paraît monotone ; la variété colorée (subtile, sur fond `#000000`) rend le fond plus naturel tout en évitant de distraire des planètes et des trajectoires (tailles/luminosité réduites).
+- **Contexte** : distribution aléatoire sphérique conservée ; les étoiles restent `fog={false}` pour ne pas être atténuées.
+- **Statut** : active (V1.3.1).
+
+## Décision — Assets 3D réels (NASA / JPL / USGS)
+
+- **Décision** : remplacer les sphères colorées de secours par des **assets astronomiques réels**.
+  Chaque planète étant une sphère, l'asset scientifique réel retenu est sa **carte équirectangulaire
+  d'albédo** (NASA SVS, NASA 3D Resources, USGS, CGI Moon Kit). Aucun asset n'est généré, reconstruit
+  ou simulé artificiellement (pas d'effet GLSL, pas de forme procédurale).
+- **Raison** : exigence de la mission « VRAIS MODÈLES 3D ». Les cartes équirectangulaires NASA sont
+  les données scientifiques authentiques ; les planètes sont des sphères, aussi cette approche est-elle
+  à la fois réelle, astronomiquement correcte et non procédurale.
+- **Contexte** : le dépôt officiel NASA 3D (`nasa/NASA-3D-Resources`) contient des engins spatiaux, pas
+  des globes planétaires ; un chargeur GLB/glTF (`modelLoader.ts`, DRACO paresseux) est néanmoins en
+  place et le registre (`modelRegistry.ts`) peut référencer un `gltfFile` sans autre modification de code.
+- **Sources documentées** (par corps, dans `modelRegistry.ts`) :
+  Soleil = NASA SVS 11255 (SDO) ; Mercure = NASA SVS 11197 (MESSENGER) ; Vénus/Terre/Mars/Jupiter/
+  Saturne/Neptune = NASA 3D Resources ; Lune = NASA SVS 4720 (CGI Moon Kit, LROC WAC) ; Uranus =
+  Solar System Scope (CC BY 4.0, dérivé des données NASA Voyager/Hubble).
+- **Soleil** : la texture SDO n'est que le rendu visuel ; le `THREE.PointLight` reste la source
+  lumineuse principale (non remplacé).
+- **Saturne** : anneaux procéduraux conservés en secours documenté (aucun GLB d'anneau réel intégré).
+- **Honnêteté** : aucune planète n'est qualifiée de « modèle 3D GLB » tant qu'un tel asset réel n'est
+  pas intégré et vérifié ; les 10 corps utilisent des cartes équirectangulaires réelles (assets réels).
+- **Statut** : active (mission VRAIS MODÈLES 3D, étape 1 — textures réelles + architecture GLB prête).

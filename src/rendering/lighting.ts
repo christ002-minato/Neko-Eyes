@@ -31,39 +31,37 @@ export function createSunLight(
   sunPosition: [number, number, number],
   planetPositions: Record<string, [number, number, number]>
 ): SolarLighting {
-  // Directionnelle light representing the Sun — fill léger de champ lointain.
-  const light = new THREE.DirectionalLight(0xffffff, 0.04)
-  
-  // Le Soleil est à l'origine [0,0,0].
-  const sunDir = new THREE.Vector3()
-  sunDir.set(1, 0, 0)
+  const light = new THREE.DirectionalLight(0xffffff, 1.1)
+
+  const sampledBodies = Object.entries(planetPositions)
+    .filter(([bodyId]) => bodyId !== "sun")
+    .map(([, position]) => new THREE.Vector3(position[0], position[1], position[2]))
+    .filter((vector) => vector.lengthSq() > 0.0001)
+
+  const sunDir = sampledBodies.length > 0
+    ? sampledBodies.reduce((acc, vector) => acc.add(vector), new THREE.Vector3()).normalize()
+    : new THREE.Vector3(1, 0, 0)
+
   light.position.set(sunPosition[0], sunPosition[1], sunPosition[2])
   light.target.position.set(sunPosition[0] + sunDir.x, sunPosition[1] + sunDir.y, sunPosition[2] + sunDir.z)
   light.target.updateMatrixWorld()
   light.castShadow = true
-  
-  // Config shadow settings for realism
+
   light.shadow.mapSize.width = 1024
   light.shadow.mapSize.height = 1024
   light.shadow.bias = -0.0001
   light.shadow.radius = 4
 
-  // Source ponctuelle au Soleil pour un éclairage radial jour/nuit cohérent.
-  // decay = 0 -> pas d'atténuation en distance : chaque planète, proche ou
-  // lointaine, reçoit la même irradiance du côté tourné vers le Soleil.
-  // La face éclairée est nettement plus brillante que la face sombre (ambiance
-  // quasi nulle), produisant une séparation jour/nuit réelle sur tous les corps.
-  const pointLight = new THREE.PointLight(0xffffff, 2.8, 0, 0)
+  const pointLight = new THREE.PointLight(0xffffff, 2.6, 0, 2)
   pointLight.position.set(sunPosition[0], sunPosition[1], sunPosition[2])
-  
-  // Day/night configuration
+
   const dayNightConfig: DayNightConfig = {
     hasDaylight: true,
     daylightDirection: sunDir,
-    ambientIntensity: 0.02,
-    directIntensity: 1,
+    ambientIntensity: 0.05,
+    directIntensity: 1.1,
   }
-  
+
   return { light, pointLight, dayNightConfig }
 }
 
@@ -80,8 +78,8 @@ export function isBodyIlluminated(
   sunDirection: THREE.Vector3
 ): boolean {
   const bodyVec = new THREE.Vector3(bodyPosition[0], bodyPosition[1], bodyPosition[2])
-  const dotProduct = bodyVec.dot(sunDirection)
-  return dotProduct > 0
+  const direction = sunDirection.clone().normalize()
+  return bodyVec.clone().normalize().dot(direction) > 0
 }
 
 /**
@@ -131,19 +129,35 @@ export function useSolarLighting(
   planetPositions: Record<string, [number, number, number]>
 ) {
   const { light, pointLight, dayNightConfig } = createSunLight(sunPosition, planetPositions)
-  
+
+  const sunVector = new THREE.Vector3(...sunPosition)
   const planetIllumination: Record<string, boolean> = {}
   const knownBodies = ["earth", "moon", "mars", "jupiter", "saturn", "uranus", "neptune", "mercury", "venus"]
-  
+
+  const daylightDirection = new THREE.Vector3()
+  const bodyVectors = knownBodies
+    .map((bodyId) => planetPositions[bodyId] ? new THREE.Vector3(...planetPositions[bodyId]) : null)
+    .filter((vector): vector is THREE.Vector3 => vector !== null && vector.lengthSq() > 0.0001)
+
+  if (bodyVectors.length > 0) {
+    daylightDirection.copy(bodyVectors.reduce((acc, vector) => acc.add(vector), new THREE.Vector3())).normalize()
+  } else {
+    daylightDirection.set(1, 0, 0)
+  }
+
   for (const bodyId of knownBodies) {
     if (planetPositions[bodyId]) {
       planetIllumination[bodyId] = isBodyIlluminated(
         planetPositions[bodyId],
-        dayNightConfig.daylightDirection
+        daylightDirection
       )
     }
   }
-  
+
+  if (sunVector.lengthSq() > 0) {
+    daylightDirection.copy(sunVector.multiplyScalar(-1)).normalize()
+  }
+
   return {
     light,
     pointLight,

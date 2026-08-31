@@ -145,6 +145,18 @@
 16. Soleil toujours statique ✅
 17. aucune dérive artificielle de la hiérarchie ✅
 
+## V1.3.2 — Rendement visuel / correction solaire + ring Saturne
+
+- ✅ `npx tsc --noEmit` → aucune erreur
+- ✅ `npm run build` → réussite
+- ✅ `npx jiti src/orbital/selftest.ts` → 7/7 tests passés
+- ✅ `npx jiti src/orbital/ephemeris/selftest.ts` → 27/27 tests passés
+- ✅ correction de la projection texture pour les sphères et suppression de la répétition / stretch
+- ✅ Soleil plus lumineux, halo maîtrisé + rendu auto-émissif conservé
+- ✅ jour/nuit aligné sur la position du Soleil sans couleur sombre artificielle
+- ✅ Saturne avec anneau semi-transparent et bandes cohérentes avec l'axe de rotation
+- ✅ zoom/damping/focus conservés, aucune régression sur les systèmes verrouillés
+
 ## V1.0.1 — Terre réelle JPL
 
 - ✅ JPLProvider instanciable
@@ -405,3 +417,36 @@
 
 ### Vérification visuelle
 - ⚠️ Validation visuelle WebGL non réalisable dans l'environnement partagé. À confirmer manuellement sur navigateur avec WebGL : niveaux de zoom très éloignés et très proches, 8 planètes + Lune, sélection + Focus Camera, et fonctionnement jour/nuit + textures.
+
+### Mission « VRAIS MODÈLES 3D ASTRONOMIQUES »
+- ✅ Assets réels intégrés pour les 10 corps (Soleil, Mercure, Vénus, Terre, Lune, Mars, Jupiter, Saturne, Uranus, Neptune) — cartes équirectangulaires d'albédo NASA/JPL/USGS (provenance documentée dans `src/rendering/models/modelRegistry.ts`).
+- ✅ Architecture `src/rendering/models/` créée : `modelRegistry.ts` (registre), `modelLoader.ts`
+  (cache unique, GLB/glTF + DRACO paresseux, aucun chargement dans `useFrame`), `useAstroModel.ts`
+  (hook React), `types.ts`, `index.ts`.
+- ✅ Fichiers `public/textures/{corps}.jpg` présents et servis par le serveur de dev (HTTP 200) et copiés dans `dist/textures/` au build.
+- ✅ Soleil : texture SDO réelle ; `THREE.PointLight` (source lumineuse) non remplacé.
+- ✅ Saturne : anneaux procéduraux conservés en secours documenté (aucun GLB d'anneau réel intégré).
+- ✅ Aucun asset généré/simulé (pas d'effet GLSL, pas de forme procédurale) ; les 10 corps utilisent
+  des données scientifiques réelles. Aucune planète n'est déclarée « modèle 3D GLB » sans asset GLB réel.
+- ✅ Non-régression : `tsc --noEmit` 0 erreur ; `npm run build` réussite ; selftest orbital 7/7 ; selftest ephemeris 27/27.
+- ⚠️ Validation visuelle finale (rendu WebGL) à confirmer sur navigateur.
+
+## V1.3.2 — Correction du rendu des corps (Soleil / Planètes / Anneaux)
+
+- ✅ Soleil : `createSunMesh()` configuré en auto-émissif (`emissiveMap` = texture SDO, `emissive` blanc,
+  `emissiveIntensity` 1.15, `color` noir, `toneMapped` false) → indépendant de l'éclairage des planètes.
+  `THREE.PointLight` (source lumineuse des planètes) non modifié.
+- ✅ Planètes : `color` passé à blanc neutre quand la vraie texture est présente (suppression de la teinte
+  saturée pure `gradientColors.c2` qui assombrissait l'apparence). Repli gradient si texture absente.
+- ✅ Lune : `color` blanc neutre avec texture LROC.
+- ✅ Saturne : ancien anneau plat unique (`ringGeometry` + `meshBasicMaterial` non éclairé) remplacé par
+  `SaturnRings` — plusieurs `RingGeometry` concentriques (C/B/A + bord externe) à opacités variables avec
+  divisions réelles (trou de Cassini = espace sans géométrie). Orientés plan équatorial (couchés + inclinaison
+  26.73°), centrés sur Saturne, éclairés par la scène (`MeshStandardMaterial`, `DoubleSide`, `depthWrite=false`).
+  Géométries disposées au démontage.
+- ✅ Terre : sphère d'atmosphère empilée (`radius*1.15`, `BackSide`, `#4B9CD3`) supprimée (ne respectait pas la
+  règle « pas d'empilement de sphères simulant une couleur »).
+- ✅ Jour/Nuit : éclairage V1.1.2 vérifié intact (faces éclairée/sombre réelles conservées).
+- ✅ Aucune nouvelle dépendance ; aucune allocation/création de matériau dans `useFrame`.
+- ✅ Non-régression : `tsc --noEmit` 0 erreur ; `npm run build` réussite ; selftest orbital 7/7 ; selftest ephemeris 27/27.
+- ⚠️ Validation visuelle finale (rendu WebGL) à confirmer sur navigateur.

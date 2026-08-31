@@ -28,5 +28,6 @@ export { loadTexture, getTexture, hasTexture, preloadAllTextures, getMaterialCon
 export { getRotationAngle } from "./rotation.ts"
 export { createPlanetMesh } from "./planetMesh.ts"
 export { createSunMesh } from "./sunMesh.ts"
+export * from "./models/index.ts"
 export { TRAJECTORY_COLORS, DEFAULT_TRAJECTORY_COLOR, getTrajectoryColor, getTrajectoryConfig, type TrajectoryVisualConfig } from "./trajectory.ts"
 export { createOrbitTrajectory, disposeOrbitTrajectory, type OrbitTrajectory, type OrbitTrajectoryOptions } from "./orbitTrajectory.ts"

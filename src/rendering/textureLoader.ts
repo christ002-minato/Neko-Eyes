@@ -85,11 +85,14 @@ export function loadTexture(bodyType: BodyType): Promise<THREE.Texture> {
           path,
           (tex) => {
             tex.colorSpace = THREE.SRGBColorSpace
-            tex.wrapS = THREE.RepeatWrapping
-            tex.wrapT = THREE.RepeatWrapping
+            tex.wrapS = THREE.ClampToEdgeWrapping
+            tex.wrapT = THREE.ClampToEdgeWrapping
+            tex.repeat.set(1, 1)
+            tex.offset.set(0, 0)
             tex.minFilter = THREE.LinearMipmapLinearFilter
             tex.magFilter = THREE.LinearFilter
             tex.generateMipmaps = true
+            tex.needsUpdate = true
             resolve(tex)
           },
           undefined,

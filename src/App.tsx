@@ -5,7 +5,8 @@ import * as THREE from 'three'
 import nekoLogo from '@/imports/neko_eyer_logo.png'
 import { JPLProvider } from '@/orbital/ephemeris'
 import { defineOrbitalSystem, getBodyPosition } from '@/orbital'
-import { useSolarLighting, mapOrbitalDistanceToVisual, mapBodySizeToVisual, mapOrbitalPositionToVisual, loadTexture, getMaterialConfig, getRotationAngle, createPlanetMesh, createSunMesh, getTrajectoryConfig, createOrbitTrajectory, disposeOrbitTrajectory, type BodyType, getPlanetMaterialConfig } from "@/rendering"
+import { useSolarLighting, mapOrbitalDistanceToVisual, mapBodySizeToVisual, mapOrbitalPositionToVisual, getMaterialConfig, getRotationAngle, createPlanetMesh, createSunMesh, getTrajectoryConfig, createOrbitTrajectory, disposeOrbitTrajectory, type BodyType, getPlanetMaterialConfig } from "@/rendering"
+import { useAstroModel } from "@/rendering/models"
 
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -267,12 +268,7 @@ function Sun({
 }) {
   const meshRef = useRef<THREE.Mesh>(null)
   const isSelected = selectedId === 'sun'
-  const [sunTexture, setSunTexture] = useState<THREE.Texture | null>(null)
-  const sunMaterialConfig = useMemo(() => getMaterialConfig("sun"), [])
-
-  useEffect(() => {
-    loadTexture("sun").then(setSunTexture)
-  }, [])
+  const { texture: sunTexture } = useAstroModel("sun")
 
   useFrame((_, delta) => {
     if (meshRef.current) {
@@ -281,30 +277,43 @@ function Sun({
   })
 
   const visualSunRadius = mapBodySizeToVisual(SUN.radius)
+  const sunHaloRadius = visualSunRadius * 2.8
+  const sunInnerHaloRadius = visualSunRadius * 2.1
+
   const sunMesh = useMemo(() => createSunMesh({ position: [0, 0, 0], radius: visualSunRadius, color: SUN.color, bodyType: "sun" }, {
-    color: "#fff5a0", emissive: "#ffd700", emissiveIntensity: 0.3,
-    roughness: sunMaterialConfig.roughness, metalness: sunMaterialConfig.metalness, map: sunTexture ?? undefined,
-  }), [sunTexture, sunMaterialConfig, visualSunRadius])
+    color: "#fff6d6",
+    emissive: "#ffb347",
+    emissiveMap: sunTexture ?? undefined,
+    emissiveIntensity: 2.2,
+    map: sunTexture ?? undefined,
+    roughness: 0.8,
+    metalness: 0.08,
+    toneMapped: false,
+    side: THREE.FrontSide,
+  }), [sunTexture, visualSunRadius])
 
   return (
     <group>
-      {/* Corona glow */}
-      <mesh>
-        <sphereGeometry args={[mapBodySizeToVisual(22), 32, 32]} />
+      <mesh scale={1.05}>
+        <sphereGeometry args={[sunHaloRadius, 32, 32]} />
         <meshBasicMaterial
-          color="#ffaa00"
+          color="#ffaf3b"
           transparent
-          opacity={0.08}
+          opacity={0.18}
           side={THREE.BackSide}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
         />
       </mesh>
-      <mesh>
-        <sphereGeometry args={[mapBodySizeToVisual(18), 32, 32]} />
+      <mesh scale={1.02}>
+        <sphereGeometry args={[sunInnerHaloRadius, 32, 32]} />
         <meshBasicMaterial
-          color="#ffcc44"
+          color="#ffd16a"
           transparent
-          opacity={0.04}
+          opacity={0.1}
           side={THREE.BackSide}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
         />
       </mesh>
       {/* Selection glow */}
@@ -373,19 +382,13 @@ function Planet({
   const moonMeshRef = useRef<THREE.Mesh>(null)
   const isSelected = selectedId === planet.id
 
-  const [texture, setTexture] = useState<THREE.Texture | null>(null)
+  const { texture } = useAstroModel(bodyType ?? "earth")
   const materialConfig = useMemo(() => {
     if (bodyType && illuminated !== undefined) {
       return getPlanetMaterialConfig(bodyType, illuminated)
     }
     return bodyType ? getMaterialConfig(bodyType) : { roughness: 0.7, metalness: 0.1 }
   }, [bodyType, illuminated])
-
-  useEffect(() => {
-    if (bodyType) {
-      loadTexture(bodyType).then(setTexture)
-    }
-  }, [bodyType])
 
   useFrame((_, delta) => {
     if (meshRef.current) {
@@ -407,12 +410,8 @@ function Planet({
   const visualMoonRadius = mapBodySizeToVisual(moonData.radius)
   const visualMoonOrbitRadius = mapOrbitalDistanceToVisual(moonData.orbitRadius, true)
 
-  const [moonTexture, setMoonTexture] = useState<THREE.Texture | null>(null)
+  const { texture: moonTexture } = useAstroModel("moon")
   const moonMaterialConfig = useMemo(() => getMaterialConfig("moon"), [])
-
-  useEffect(() => {
-    loadTexture("moon").then(setMoonTexture)
-  }, [])
 
   const gradientColors = useMemo(() => {
     if (planet.id === 'earth') return { c1: '#7dd4f6', c2: planet.color, c3: '#2e7a2c' }
@@ -422,7 +421,9 @@ function Planet({
   }, [planet])
 
   const materialProps = useMemo(() => ({
-    color: gradientColors.c2,
+    // Couleur neutre quand la vraie texture est présente → rendu naturel, non saturé.
+    // En repli (sans texture), on garde la couleur de gradient d'origine.
+    color: texture ? "#ffffff" : gradientColors.c2,
     emissive: new THREE.Color(0x000000),
     emissiveIntensity: 0,
     roughness: materialConfig.roughness,
@@ -472,33 +473,8 @@ function Planet({
           </mesh>
         )}
       </group>
-      {/* Saturn rings */}
-      {planet.id === 'saturn' && (
-        <mesh rotation={[Math.PI / 2.5, 0, 0]}>
-          <ringGeometry args={[visualRadius * 1.3, visualRadius * 2.2, 64]} />
-          <meshBasicMaterial
-            color={planet.color}
-            transparent
-            opacity={0.45}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-      )}
-      {/* Earth axial tilt */}
-      {planet.id === 'earth' && (
-        <group>
-          {/* Atmosphere glow */}
-          <mesh>
-            <sphereGeometry args={[visualRadius * 1.15, 32, 32]} />
-            <meshBasicMaterial
-              color="#4B9CD3"
-              transparent
-              opacity={0.08}
-              side={THREE.BackSide}
-            />
-          </mesh>
-        </group>
-      )}
+      {/* Saturn rings — anneaux 3D réalistes : bandes de transparence, éclairés par la scène */}
+      {planet.id === 'saturn' && <SaturnRings radius={visualRadius} />}
       {/* Moon around Earth */}
       {planet.id === 'earth' && (
         <>
@@ -514,7 +490,7 @@ function Planet({
             >
               <sphereGeometry args={[visualMoonRadius, 16, 16]} />
               <meshStandardMaterial
-                color={moonData.color}
+                color={moonTexture ? "#ffffff" : moonData.color}
                 emissive={new THREE.Color(0x000000)}
                 emissiveIntensity={0}
                 roughness={moonIlluminated ? (moonMaterialConfig.roughness) : 0.9}
@@ -567,6 +543,94 @@ function OrbitalTrajectory({ radius, bodyId }: { radius: number; bodyId: string 
   useEffect(() => () => disposeOrbitTrajectory(trajectory), [trajectory])
 
   return <primitive object={trajectory.line} />
+}
+
+// Anneaux de Saturne : plusieurs bandes concentriques non-opaques (zones de
+// transparence / divisions type Cassini) centrées et orientées dans le plan
+// équatorial de la planète. Chaque bande est une géométrie annulaire réelle,
+// éclairée par la scène (MeshStandardMaterial) comme le reste des corps.
+const SATURN_RING_BANDS = [
+  { i: 1.25, o: 1.45, color: "#e8d8b0", opacity: 0.52 },
+  { i: 1.50, o: 1.85, color: "#cdb486", opacity: 0.9 },
+  { i: 1.85, o: 1.95, color: "#d8c79c", opacity: 0.45 },
+  { i: 2.02, o: 2.25, color: "#e3d2a8", opacity: 0.7 },
+  { i: 2.25, o: 2.33, color: "#cbb98c", opacity: 0.35 },
+  { i: 2.36, o: 2.45, color: "#ddcaa0", opacity: 0.45 },
+]
+
+function createSaturnRingTexture(): THREE.Texture {
+  const canvas = document.createElement("canvas")
+  canvas.width = 1024
+  canvas.height = 64
+  const ctx = canvas.getContext("2d")
+  if (!ctx) {
+    return new THREE.Texture()
+  }
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  const gradient = ctx.createLinearGradient(0, 0, canvas.width, 0)
+  gradient.addColorStop(0, "rgba(255,255,255,0)")
+  gradient.addColorStop(0.18, "rgba(238,218,180,0.65)")
+  gradient.addColorStop(0.34, "rgba(200,169,104,0.96)")
+  gradient.addColorStop(0.52, "rgba(240,225,190,0.92)")
+  gradient.addColorStop(0.78, "rgba(185,150,95,0.82)")
+  gradient.addColorStop(1, "rgba(255,255,255,0)")
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+  for (let i = 0; i < 24; i += 1) {
+    const bandWidth = 18 + (i % 6) * 3
+    const x = (i / 24) * canvas.width
+    const alpha = 0.15 + ((i % 5) / 6) * 0.22
+    ctx.fillStyle = `rgba(255, 244, 214, ${alpha})`
+    ctx.fillRect(x, 0, bandWidth, canvas.height)
+  }
+
+  const ringTexture = new THREE.CanvasTexture(canvas)
+  ringTexture.colorSpace = THREE.SRGBColorSpace
+  ringTexture.wrapS = THREE.ClampToEdgeWrapping
+  ringTexture.wrapT = THREE.ClampToEdgeWrapping
+  ringTexture.needsUpdate = true
+  return ringTexture
+}
+
+function SaturnRings({ radius }: { radius: number }) {
+  const ringTexture = useMemo(() => createSaturnRingTexture(), [])
+  const bands = useMemo(
+    () =>
+      SATURN_RING_BANDS.map((b) => ({
+        geometry: new THREE.RingGeometry(b.i * radius, b.o * radius, 256, 1),
+        color: b.color,
+        opacity: b.opacity,
+      })),
+    [radius],
+  )
+
+  const axialTilt = 26.73 * (Math.PI / 180)
+  useEffect(() => () => {
+    bands.forEach((b) => b.geometry.dispose())
+    ringTexture.dispose()
+  }, [bands, ringTexture])
+
+  return (
+    <group rotation={[0, axialTilt, 0]}>
+      {bands.map((b, idx) => (
+        <mesh key={idx} geometry={b.geometry} rotation-x={-Math.PI / 2}>
+          <meshStandardMaterial
+            map={ringTexture}
+            color={b.color}
+            transparent
+            opacity={b.opacity}
+            side={THREE.DoubleSide}
+            roughness={0.9}
+            metalness={0}
+            alphaTest={0.02}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  )
 }
 
 function OrbitRings() {
@@ -781,8 +845,8 @@ function SolarSystemScene({
         makeDefault
         enableDamping
         dampingFactor={0.08}
-        minDistance={mapBodySizeToVisual(15)}
-        maxDistance={mapOrbitalDistanceToVisual(350)}
+        minDistance={0.6}
+        maxDistance={mapOrbitalDistanceToVisual(700)}
         maxPolarAngle={Math.PI * 0.85}
         minPolarAngle={Math.PI * 0.1}
         rotateSpeed={0.5}
@@ -1670,7 +1734,7 @@ function ExplorerSection() {
       {/* 3D Solar System */}
       <div className="absolute inset-0">
         <Canvas
-          camera={{ position: [80, 60, 80], fov: 50, near: 0.1, far: 2000 }}
+          camera={{ position: [80, 60, 80], fov: 50, near: 0.05, far: 10000 }}
           gl={{ antialias: true, alpha: false }}
           dpr={[1, 2]}
         >

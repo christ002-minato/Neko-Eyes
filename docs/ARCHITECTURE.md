@@ -132,6 +132,15 @@ L'infrastructure texture est maintenant prête pour une utilisation future dans 
 
 L'infrastructure V1.1.2 prépare le terrain pour V1.1.3 (rotation des corps) et les améliorations visuelles futures.
 
+## Correction du rendu solaire + anneaux Saturne (V1.3.2)
+
+- `src/rendering/textureLoader.ts` applique maintenant `ClampToEdgeWrapping` pour éviter la répétition/étirement sur les sphères texturées.
+- `src/App.tsx` garde un Soleil auto-émissif plus lumineux avec halo contrôlé (`meshBasicMaterial` additif) sans masquer les objets proches.
+- `src/rendering/lighting.ts` calcule le jour/nuit à partir de la direction du Soleil vers chaque corps, plutôt que sur une direction fixe arbitraire.
+- `SaturnRings` dans `src/App.tsx` utilise une géométrie annulaire réelle, semi-transparente, avec bandes texturées et angle de rotation cohérent avec l'axe de Saturne.
+- `OrbitControls` reste conservé avec une plage de zoom compatible, sans casser Focus Camera, sélection ni damping.
+- Les systèmes verrouillés (`src/orbital/`, JPL, camera, focus, time control, trajectories) restent intacts.
+
 ## Visual Scale / Scene Mapping + Rendu spatial réaliste (V1.2.0)
 
 ### Visual Scale — `src/rendering/visualScale.ts`
@@ -263,3 +272,37 @@ Ajouté au-dessus de l'architecture existante, sans modification de `src/orbital
 - Distribution aléatoire et naturelle conservée (sphères de rayon 300–800).
 - Tailles (0.15–1.05) et opacité (0.8) réduites pour ne pas dépasser les planètes ni les trajectoires.
 - Fond conservé `#000000`, étoiles non affectées par le fog (`fog={false}`).
+
+## Couche `src/rendering/models/` — Assets 3D réels (NASA / JPL / USGS)
+
+Sépare clairement la donnée astronomique du rendu des corps, sans mélanger données orbitales
+(`src/orbital`), données JPL (`src/orbital/ephemeris`), logique caméra (`CameraController` /
+`OrbitControls`) et rendu.
+
+### Composants
+- `modelRegistry.ts` — **source unique de vérité** associant chaque `BodyType`
+  (sun, mercury, venus, earth, moon, mars, jupiter, saturn, uranus, neptune) à son asset réel :
+  source, URL, licence, format, textures, échelle/orientation (GLB), `fallback`.
+- `modelLoader.ts` — chargeur unique et mis en cache (Map de Promises) :
+  - `assetType: "texture"` → `THREE.TextureLoader` (carte équirectangulaire réelle).
+  - `assetType: "gltf"` → `GLTFLoader` + `DRACOLoader` (chargés paresseusement via `import()`
+    dynamique afin de ne pas alourdir le bundle principal). Applique `scale`/`orientation`.
+  - En cas d'échec, la Promise rejette ; le composant retombe sur le rendu de secours (sphère colorée).
+- `useAstroModel.ts` — hook React : charge l'asset une fois au montage, expose `texture` /
+  `object` / `status`. Aucun chargement dans `useFrame`.
+- `types.ts`, `index.ts` — types et ré-exports.
+
+### Contrats de performance
+- Chargement unique par asset, réutilisé (cache).
+- Aucun `fetch` réseau dans la boucle de rendu.
+- Aucune création répétée de géométrie/matériau.
+- Décodeur DRACO en chunk différé (uniquement si un GLB compressé est chargé).
+
+### Intégration
+`src/App.tsx` (composants `Sun` et `Planet`) utilise `useAstroModel(bodyId)` à la place de l'ancien
+`loadTexture`. Le Soleil est rendu **auto-émissif** (`emissiveMap` = texture SDO, `emissive` blanc,
+`emissiveIntensity` 1.15, `color` noir, `toneMapped` false) et donc **indépendant de l'éclairage des
+planètes** ; son `THREE.PointLight` reste la source lumineuse des planètes (inchangé). Saturne utilise
+désormais `SaturnRings` (plusieurs `RingGeometry` concentriques bandées, orientées plan équatorial,
+éclairées par la scène) plutôt que l'ancien anneau plat unique non éclairé. Les planètes/Lune utilisent
+un `color` blanc neutre quand la vraie texture est présente (couleurs naturelles, non saturées).

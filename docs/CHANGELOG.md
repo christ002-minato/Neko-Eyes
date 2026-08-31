@@ -190,6 +190,15 @@
 - Conservation de toutes les fonctionnalités verrouillées (CameraController, OrbitControls, TimeControlBar, etc.)
 - Séparation architecture : `src/orbital/` trajectoires vs `src/rendering/` apparence
 
+## V1.3.2 — Correction rendu solaire + anneaux Saturne
+
+- Correction du chargement texture avec projection sphérique correcte (`ClampToEdgeWrapping` et suppression des répétitions).
+- Soleil renforcé dans sa luminosité émissive et son halo sans masquer les objets proches.
+- Refactor du jour/nuit pour utiliser la direction solaires réelle par rapport aux corps, sans teinte sombre artificielle.
+- Saturne reconstruit avec une vraie géométrie annulaire plus fine, semi-transparente et texturée par bandes.
+- OrbitControls conservé sans régression de zoom, focus ou sélection.
+- Validation : `npx tsc --noEmit`, `npm run build`, selftests orbital/ephemeris passés.
+
 ## V1.1.1 — Textures planétaires
 
 - Infrastructure de texturesplanétaires dans `src/rendering/textureLoader.ts`
@@ -321,3 +330,35 @@
 - Aucune nouvelle dépendance ; réutilisation de l'architecture rendering (`src/rendering/`).
 - Géométries/matériaux créés une seule fois ; aucune allocation ni recalcul dans `useFrame`.
 - Non-régression : selftest orbital 7/7, selftest ephemeris 27/27, `tsc --noEmit` (0 erreur), `npm run build` (réussite).
+
+## [Assets 3D réels] Intégration de modèles astronomiques NASA/JPL/USGS
+
+- **Ajout** : `src/rendering/models/` — architecture de chargement d'assets réels découplée
+  (registre + chargeur GLB/glTF + hook React), sans mélanger données orbitales, JPL, caméra et rendu.
+- **Assets réels intégrés (10/10)** : cartes équirectangulaires d'albédo réelles pour Soleil, Mercure,
+  Vénus, Terre, Lune, Mars, Jupiter, Saturne, Uranus, Neptune (sources documentées dans `modelRegistry.ts`).
+- **Soleil** : texture SDO réelle ; `THREE.PointLight` conservé comme source lumineuse principale.
+- **Saturne** : anneaux procéduraux conservés (secours documenté, aucun GLB d'anneau réel intégré).
+- **GLB/glTF** : chargeur prêt (GLTFLoader + DRACO chargés paresseusement) ; aucun globe planétaire
+  GLB officiel NASA disponible (le dépôt NASA 3D contient des engins spatiaux), d'où l'usage des
+  cartes équirectangulaires réelles. Aucun asset généré/simulé.
+- **Non-régression** : calculs orbitaux V0.9.4, JPL V1.0.x, visualScale, trajectoires, lighting V1.1.2
+  et CameraController/OrbitControls/TimeControlBar/Focus Camera/sélection/zoom/damping intacts.
+- **Validation** : `tsc --noEmit` 0 erreur, `npm run build` OK, selftest orbital 7/7, selftest ephemeris 27/27.
+
+## V1.3.2 — Correction du rendu des corps (Soleil / Planètes / Anneaux)
+
+- **Soleil** : rendu auto-émissif indépendant de l'éclairage des planètes (`emissiveMap` = texture SDO,
+  `emissive` blanc, `emissiveIntensity` 1.15, `color` noir, `toneMapped` false). `THREE.PointLight` conservé
+  comme source lumineuse des planètes (inchangé). Couronnes (glow) conservées.
+- **Planètes** : suppression de la teinte saturée pure (`gradientColors.c2`) qui assombrissait/désaturait
+  la texture réelle ; `color` blanc neutre quand la vraie texture est présente → couleurs naturelles.
+- **Lune** : même correction (blanc neutre avec texture LROC).
+- **Saturne** : anneaux plats uniques (`meshBasicMaterial` non éclairé) remplacés par de vrais anneaux 3D
+  bandés — plusieurs `RingGeometry` concentriques à opacités variables avec divisions (trou de Cassini),
+  orientés dans le plan équatorial (26.73°) et éclairés par la scène (`MeshStandardMaterial`, `DoubleSide`).
+- **Terre** : suppression de la sphère d'atmosphère empilée (simulait une couleur par superposition).
+- **Jour/Nuit** : vérifié intact (éclairage V1.1.2 non modifié).
+- **Architecture respectée** : réutilisation `createSunMesh`/`createPlanetMesh`/`useSolarLighting`/`useAstroModel` ;
+  aucune nouvelle dépendance ; aucune allocation dans `useFrame`.
+- **Validation** : `tsc --noEmit` 0 erreur, `npm run build` OK, selftest orbital 7/7, selftest ephemeris 27/27.

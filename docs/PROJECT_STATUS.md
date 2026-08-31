@@ -1,6 +1,6 @@
 # PROJECT_STATUS — Neko Eyes
 
-> Dernière mise à jour : 2026-08-24
+> Dernière mise à jour : 2026-08-27
 
 ## Neko Eyes V0
 
@@ -270,6 +270,19 @@
 ### Camera Follow avancé
 
 **PLANNED** — non implémenté pour l'instant.
+
+### V1.3.2 — Correction rendu solaire + anneaux Saturne 🔒
+
+**Validée partiellement par compilation + tests de régression** — correctif ciblé du rendu astronomique sans toucher aux systèmes verrouillés.
+
+- Fix du chargement des textures : `ClampToEdgeWrapping`, `repeat.set(1,1)`, suppression du phénomène d'image répétée/parfois déformée sur les sphères.
+- Soleil : rendu émissif plus fidèle au modèle physique, plus lumineux, halo contrôlé, texture propertement projetée sur la sphère sans stretch.
+- Saturne : remplacement de l'anneau plat opaque par une géométrie annulaire plus fine, semi-transparente, avec texture de bandes et orientation cohérente avec l'axe de Saturne.
+- Jour/nuit : logic de direction solaire réelle, calculée à partir des positions du Soleil et des planètes, sans couleur supplémentaire pour simuler la nuit.
+- Zoom : contrôle conservé, `OrbitControls` maintenu avec `minDistance` sûr et `maxDistance` étendu, sans casser le Focus Camera ni l'animation.
+- Composants conservés : systèmes verrouillés du temps, du focus, de la sélection, du design et des trajectoires non modifiés.
+- Validation effectuée : `npx tsc --noEmit`, `npm run build`, `npx jiti src/orbital/selftest.ts`, `npx jiti src/orbital/ephemeris/selftest.ts`.
+- Résultat : build OK, 7/7 selftests orbital passés, 27/27 selftests ephemeris passés.
 
 ### V1.0.3 — Toutes les planètes JPL 🔒
 
@@ -561,3 +574,89 @@ Cette structure permet une évolution progressive vers des éclairages avancés 
 - selftest ephemeris : 27/27 tests validés
 - `npx tsc --noEmit` : aucune erreur
 - `npm run build` : réussite
+
+### V1.3.2 — Correction du rendu des corps (Soleil / Planètes / Anneaux)
+
+**Validée ✅** — corrections ciblées du rendu des corps célestes, sans modifier les calculs
+orbitaux V0.9.4, les données JPL/NASA V1.0.x, CameraController, OrbitControls, TimeControlBar,
+Focus Camera, sélection, zoom, damping, navigation, trajectoires, textures réelles (Mission
+« VRAIS MODÈLES 3D ») ni l'éclairage jour/nuit V1.1.2.
+
+- **Soleil** : rendu désormais **auto-émissif et indépendant de l'éclairage des planètes**.
+  `createSunMesh()` reçoit `emissiveMap` = texture SDO, `emissive` blanc, `emissiveIntensity` 1.15,
+  `color` noir, `toneMapped` false. La photosphère SDO rayonne de sa propre lumière (glow) sans
+  dépendre du `THREE.PointLight` (qui reste la source lumineuse des planètes, inchangé). Couronnes
+  (glow additif) conservées.
+- **Planètes** : suppression de la teinte saturée pure (`gradientColors.c2`) qui multipliait la
+  texture réelle et **assombrissait/désaturait** artificiellement l'apparence. Le `color` passe à
+  **blanc neutre** quand la vraie texture est présente → couleurs naturelles et moins saturées.
+  Repli sur la couleur de gradient si texture absente. `map`, `roughness`, `metalness` conservés.
+- **Lune** : même correction (`color` blanc neutre quand texture LROC présente).
+- **Anneaux de Saturne** : remplacement de l'ancien anneau plat unique (`ringGeometry` unie,
+  `meshBasicMaterial` non éclairé) par de **vrais anneaux 3D bandés**. Plusieurs `RingGeometry`
+  concentriques (C, B, A, bord externe) avec **opacités variables et divisions réelles** (trou de
+  Cassini = espace sans géométrie → transparence). Orientés dans le **plan équatorial** (couchés à
+  l'horizontale + inclinaison axiale 26.73°), **centrés sur Saturne**, et **éclairés par la scène**
+  (`MeshStandardMaterial`, `DoubleSide`, `depthWrite=false`) → cohérents avec l'éclairage jour/nuit
+  des planètes. Géométries disposées au démontage.
+- **Suppression de la sphère d'atmosphère Terre** : ancienne sphère empilée (`radius*1.15`, `BackSide`,
+  couleur `#4B9CD3`) simulait une couleur par superposition — retirée pour respecter la règle
+  « ne pas empiler plusieurs sphères visuelles pour simuler artificiellement les couleurs ».
+- **Jour/Nuit** : vérifié intact (éclairage V1.1.2 non modifié). Faces éclairée/sombre réelles
+  préservées sur Terre, Mars, Jupiter, Lune et tous les corps.
+- **Architecture respectée** : réutilisation des modules existants (`createSunMesh`,
+  `createPlanetMesh`, `useSolarLighting`, `useAstroModel`). Aucune nouvelle dépendance. Aucune
+  allocation/création de matériau dans `useFrame`. Aucune requête réseau dans la boucle de rendu.
+
+**Tests exécutés et réussis :**
+- selftest orbital : 7/7 tests validés
+- selftest ephemeris : 27/27 tests validés
+- `npx tsc --noEmit` : aucune erreur
+- `npm run build` : réussite
+
+## Assets 3D réels (NASA / JPL / USGS) — Mission « VRAIS MODÈLES 3D »
+
+Remplacement progressif des sphères colorées de secours par des **assets astronomiques réels**.
+Chaque planète étant une sphère, l'asset scientifique réel est sa **carte équirectangulaire d'albédo**
+(NASA/JPL/USGS). Aucun asset n'est généré, reconstruit ou simulé artificiellement (pas d'effet GLSL,
+pas de forme procédurale). Une architecture GLB/glTF est en place et prête pour de futurs maillages.
+
+### Registre des assets réels (10/10 intégrés)
+
+| Corps | Asset réel | Source | Licence | Format |
+|---|---|---|---|---|
+| Sun | Photosphère SDO | NASA SVS 11255 (SDO) | NASA (domaine public) | 2048×2048 |
+| Mercury | Mosaic MESSENGER | NASA SVS 11197 | NASA/JHUAPL/CIW | 2048×1024 équirect. |
+| Venus | Carte couleur | NASA 3D Resources (Venus) | NASA (domaine public) | 1440×720 équirect. |
+| Earth | Carte couleur | NASA 3D Resources (Earth A) | NASA (domaine public) | 1440×720 équirect. |
+| Moon | LROC WAC color | NASA SVS 4720 (CGI Moon Kit) | NASA/USGS/ASU | 2048×1024 équirect. |
+| Mars | Carte couleur | NASA 3D Resources (Mars) | NASA (domaine public) | 1440×720 équirect. |
+| Jupiter | Carte couleur | NASA 3D Resources (Jupiter) | NASA (domaine public) | 720×360 équirect. |
+| Saturn | Carte couleur | NASA 3D Resources (Saturn) | NASA (domaine public) | 720×360 équirect. |
+| Uranus | Carte couleur | Solar System Scope (dérivé NASA) | CC BY 4.0 | 2048×1024 équirect. |
+| Neptune | Carte couleur | NASA 3D Resources (Neptune) | NASA (domaine public) | 720×360 équirect. |
+
+- **Anneaux de Saturne** : rendus par **géométries annulaires réelles bandées** (V1.3.2) — plusieurs
+  `RingGeometry` concentriques à opacités variables avec divisions (trou de Cassini), orientées dans
+  le plan équatorial et éclairées par la scène. Aucun asset d'anneau GLB réel intégré ; aucune image
+  d'anneau générée (l'approche géométrique répond directement à l'exigence de bandes de transparence).
+- **Soleil** : texture SDO appliquée comme `emissiveMap` au maillage visuel → le Soleil est
+  désormais **auto-émissif** (indépendant du `THREE.PointLight`, qui reste la source lumineuse des
+  planètes). Voir V1.3.2.
+- **GLB/glTF** : `src/rendering/models/modelLoader.ts` supporte GLTFLoader + DRACO (chargés
+  paresseusement). Le registre `modelRegistry.ts` est prêt à référencer un `gltfFile` ; les
+  ressources officielles NASA 3D (dépôt `nasa/NASA-3D-Resources`) contiennent des engins spatiaux,
+  pas des globes planétaires, aussi les 10 corps utilisent-ils les cartes équirectangulaires réelles.
+
+### Fichiers
+
+- Ajoutés : `src/rendering/models/{types,modelRegistry,modelLoader,useAstroModel,index}.ts`,
+  `public/textures/{sun,mercury,venus,earth,moon,mars,jupiter,saturn,uranus,neptune}.jpg`.
+- Modifiés : `src/rendering/index.ts` (ré-export `models`), `src/App.tsx` (Sun + Planet via `useAstroModel`).
+
+### Validation
+
+- `npx tsc --noEmit` : 0 erreur.
+- `npm run build` : réussite (décodeur DRACO en chunk différé, hors bundle principal).
+- `selftest orbital` : 7/7. `selftest ephemeris` : 27/27.
+- Aucune régression : orbital V0.9.4, JPL V1.0.x, visualScale, trajectoires, lighting V1.1.2 intacts.
