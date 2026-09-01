@@ -27,7 +27,7 @@ export const ASTRO_MODEL_REGISTRY: Record<BodyType, AstroModelAsset> = {
     license: "NASA (domaine public — politique d'utilisation des médias NASA)",
     format: "JPEG 2048×2048, composite SDO AIA",
     textures: ["albedo (AIA composite)"],
-    textureFile: "/textures/sun.webp",
+    textureFile: "/textures/sun3.jpg",
     fallback: false,
     notes:
       "Le Soleil conserve son THREE.Light (PointLight) comme source lumineuse " +

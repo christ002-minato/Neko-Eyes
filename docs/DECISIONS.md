@@ -344,3 +344,73 @@
 - **Honnêteté** : aucune planète n'est qualifiée de « modèle 3D GLB » tant qu'un tel asset réel n'est
   pas intégré et vérifié ; les 10 corps utilisent des cartes équirectangulaires réelles (assets réels).
 - **Statut** : active (mission VRAIS MODÈLES 3D, étape 1 — textures réelles + architecture GLB prête).
+
+## D48 — Restauration éclairage jour/nuit radial (V1.3.3)
+
+- **Décision** : corriger `src/rendering/lighting.ts` pour utiliser une `PointLight` au Soleil
+  (`intensity 2.8`, `decay 0`) comme source radiale principale, et une `DirectionalLight` faible
+  (`intensity 0.04`) en fill fixe. `AmbientLight` à `0.02`. Supprimer le calcul de `sunDir` comme
+  moyenne des positions planétaires. `planetIllumination` constant `true` pour tous les corps.
+  `getPlanetMaterialConfig()` retourne valeurs fixes par `bodyType`.
+- **Raison** : l'implémentation précédente ne produisait pas de séparation jour/nuit visible
+  (directionnelle moyenne incorrecte, fill trop fort, PointLight avec decay). La `PointLight` radiale
+  avec `decay 0` donne une irradiance uniforme → face éclairée nette, face sombre distincte sur tous
+  les corps. Le fill directionnel fixe évite les artefacts sans casser l'ombrage radial.
+- **Statut** : active (V1.3.3).
+
+## D49 — Matériau Soleil aligné décision V1.3.2 (V1.3.3)
+
+- **Décision** : aligner le matériau du Soleil dans `src/App.tsx` sur la décision V1.3.2 :
+  `color "#000000"`, `emissive "#ffffff"`, `emissiveIntensity 1.15`, `toneMapped false`,
+  `side THREE.DoubleSide`, `roughness 0.3`, `metalness 0.1`. Halos additifs réduits
+  (`opacity 0.12` externe, `0.06` interne).
+- **Raison** : le matériau précédent (`color "#fff6d6"`, `emissive "#ffb347"`, `emissiveIntensity 2.2`,
+  `side FrontSide`) lavait la texture SDO et ne respectait pas l'auto-émission documentée.
+  `DoubleSide` assure la visibilité si la caméra passe à l'intérieur (proche zoom).
+- **Statut** : active (V1.3.3).
+
+## D50 — Zoom adaptatif & Focus Camera proportionnel (V1.3.3)
+
+- **Décision** : `OrbitControls.minDistance = 0.05` (aligné `camera.near`). `CameraController`
+  calcule l'offset de focus proportionnel au rayon visuel du corps (`distance = 3.5× radius`,
+  `height = 2× radius`). Après transition, `controls.minDistance = bodyRadius * 1.05` (surface +
+  marge), `maxDistance` étendu. À la fermeture du focus, reset `minDistance = 0.05`.
+- **Raison** : `minDistance 0.6` empêchait l'approche des surfaces (Lune radius 0.8, caméra bloquée
+  à 0.6 du centre → à l'intérieur). Focus avec offset fixe (15,10,15) inadapté aux petits corps
+  (Lune trop loin) et grands (Soleil trop proche). Approche proportionnelle = expérience cohérente
+  pour tous les corps (Terre, Lune, Mars, Jupiter, Saturne, Soleil).
+- **Statut** : active (V1.3.3).
+
+## D51 — Anneaux Saturne : orientation plan équatorial (V1.3.3)
+
+- **Décision** : corriger `SaturnRings` rotation de `[0, axialTilt, 0]` (axe Y) à
+  `[axialTilt, 0, 0]` (axe X). Les anneaux sont maintenant dans le plan équatorial incliné de
+  26.73° par rapport au plan orbital (XZ), cohérent avec l'axe de rotation de Saturne.
+- **Raison** : `RingGeometry` crée un anneau dans le plan XY (normal +Z). `rotation-x=-π/2` le met
+  dans XZ (plan orbital). Rotation sur axe X par `axialTilt` incline correctement le plan équatorial.
+  L'ancienne rotation sur Y tournait l'anneau autour de la verticale, le gardant dans le plan orbital.
+- **Statut** : active (V1.3.3).
+
+## D52 — Soleil : texture SDO réelle + émission forte (V1.3.4)
+
+- **Décision** : corriger `modelRegistry.ts` pour pointer vers `/textures/sun.jpg` (2048×2048 SDO)
+  au lieu de `sun.webp` (859×429 placeholder). Augmenter `emissiveIntensity` de 1.15 à 2.5,
+  `emissive` à `#fff8e7` (blanc chaud). Renforcer les halos additifs (3 couches, opacités
+  0.18/0.12/0.08). Conserver `toneMapped: false`, `side: DoubleSide`, `PointLight` planètes inchangé.
+- **Raison** : Le placeholder webp ne montrait pas la texture SDO réelle. L'émission 1.15 ne
+  produisait pas la "forte luminosité solaire" demandée. L'émission 2.5 + halos additifs donne
+  une luminosité locale forte sans augmenter l'exposition globale (le PointLight 2.8 decay 0
+  éclaire les planètes indépendamment).
+- **Statut** : active (V1.3.4).
+
+## D53 — Lune : confirmation texture LROC WAC appliquée (V1.3.4)
+
+- **Décision** : vérifier et documenter que le chemin texture Lune est complet et fonctionnel :
+  `modelRegistry.moon.textureFile = "/textures/moon.jpg"` (2048×1024 LROC WAC) →
+  `modelLoader.loadTextureFile()` → `useAstroModel("moon")` → `Planet` component (Terre) →
+  `meshStandardMaterial` avec `map={moonTexture}`, `color="#ffffff"`. Aucune modification
+  nécessaire — l'architecture existante applique déjà correctement la texture au mesh visible.
+- **Raison** : L'utilisateur signalait une "ancienne apparence" — l'analyse du code confirme que
+  la texture réelle est bien chargée et appliquée au mesh unique de la Lune (rendu inline dans
+  le composant Terre). Aucun doublon, aucune couche résiduelle. La texture est visible.
+- **Statut** : active (V1.3.4) — validation par lecture de code, aucune modification requise.

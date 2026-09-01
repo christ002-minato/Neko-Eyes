@@ -141,6 +141,85 @@ L'infrastructure V1.1.2 prépare le terrain pour V1.1.3 (rotation des corps) et 
 - `OrbitControls` reste conservé avec une plage de zoom compatible, sans casser Focus Camera, sélection ni damping.
 - Les systèmes verrouillés (`src/orbital/`, JPL, camera, focus, time control, trajectories) restent intacts.
 
+## Correction régressions jour/nuit, zoom, Soleil, anneaux Saturne (V1.3.3)
+
+### Éclairage jour/nuit — `src/rendering/lighting.ts` (restauration V1.1.2 + V1.3.0)
+
+- **Source radiale principale** : `PointLight` au Soleil (`intensity 2.8`, `decay 0`, `distance 0`) → irradiance uniforme sur tous les corps, séparation jour/nuit physiquement correcte (face éclairée tournée vers le Soleil).
+- **Fill directionnel** : `DirectionalLight` faible (`intensity 0.04`) positionné loin (`[1000, 1000, 1000]`) ciblant l'origine → direction fixe +X, ne perturbe pas l'ombrage radial.
+- **Ambiance** : `AmbientLight` minimale (`0.02`) → face sombre distincte sans être noire pure.
+- **Suppression** : calcul erroné de `sunDir` comme moyenne des positions planétaires ; logique `planetIllumination` par corps (remplacée par `true` constant).
+- **Matériaux** : `getPlanetMaterialConfig(bodyType)` retourne valeurs fixes par type (roughness/metalness), sans variation jour/nuit — l'ombrage est géré par l'éclairage 3D.
+
+### Soleil — `src/App.tsx` (alignement décision V1.3.2)
+
+- `MeshStandardMaterial` : `color "#000000"`, `emissive "#ffffff"`, `emissiveIntensity 1.15`, `toneMapped false`, `side DoubleSide`, `roughness 0.3`, `metalness 0.1`.
+- Texture SDO en `map` (surface) et `emissiveMap` (émission).
+- Couronnes (halos additifs) : opacités réduites (`0.12` externe, `0.06` interne) pour subtilité.
+
+### Zoom & Focus Camera — `src/App.tsx`
+
+- `OrbitControls.minDistance = 0.05` (était `0.6`, aligné sur `camera.near = 0.05`).
+- `CameraController` :
+  - `getBodyVisualRadius(bodyId)` : rayon visuel du corps ciblé via `mapBodySizeToVisual()`.
+  - Position cible focus : `distance = bodyRadius * 3.5`, `height = bodyRadius * 2.0` (proportionnel).
+  - Post-transition : `controls.minDistance = bodyRadius * 1.05` (surface + marge) ; `maxDistance` étendu.
+  - Fermeture focus : reset `minDistance = 0.05`.
+
+### Anneaux de Saturne — `src/App.tsx` (`SaturnRings`)
+
+- Orientation corrigée : groupe rotation `rotation={[axialTilt, 0, 0]}` (axe X) au lieu de `[0, axialTilt, 0]` (axe Y).
+- Anneaux maintenant dans le plan équatorial incliné de 26.73° par rapport au plan orbital (XZ), cohérent avec l'axe de rotation de Saturne.
+
+### Lune
+
+- `useAstroModel("moon")` charge texture LROC WAC (`/textures/moon.jpg`) via `modelLoader.ts`.
+- Matériau : `color "#ffffff"` quand texture présente → couleurs naturelles.
+
+### Non-régression
+
+Tous les systèmes LOCKED préservés : orbital V0.9.4, JPL V1.0.3, visualScale V1.2.0, trajectoires V1.3.1, CameraController, OrbitControls, TimeControlBar, Focus Camera, sélection, damping, navigation, temps passé/futur, vitesses 0.1x/1x/5x/10x, responsive.
+
+## Correction ciblée Lune + Soleil (V1.3.4)
+
+### Lune — Texture réelle LROC WAC
+
+**Diagnostic complet du chemin texture :**
+1. `bodyType "moon"` → `ASTRO_MODEL_REGISTRY.moon` dans `modelRegistry.ts`
+2. `textureFile: "/textures/moon.jpg"` → fichier JPEG 2048×1024 (457 KB), LROC WAC color map
+3. `useAstroModel("moon")` → `loadAstroAsset()` → `loadTextureFile("/textures/moon.jpg")`
+4. `THREE.TextureLoader` : `ClampToEdgeWrapping`, `repeat.set(1,1)`, `generateMipmaps=true`, `anisotropy=8`
+5. Composant `Planet` (Terre) : rendu inline Lune dans JSX
+   - `const { texture: moonTexture } = useAstroModel("moon")`
+   - `<meshStandardMaterial color={moonTexture ? "#ffffff" : moonData.color} map={moonTexture} ... />`
+6. Mesh unique : `sphereGeometry` (16, 16) + `meshStandardMaterial` — aucune couche dupliquée, aucune sphère colorée sous-jacente
+
+**Résultat** : Texture LROC WAC correctement projetée sur sphère, UV équirectangulaire, visible à tous niveaux de zoom.
+
+### Soleil — Texture SDO 2048×2048 + forte émission lumineuse
+
+**Diagnostic complet :**
+1. **Problème texture** : `modelRegistry.ts` pointait vers `sun.webp` (859×429, placeholder) au lieu de `sun.jpg` (2048×2048, SDO AIA composite)
+2. **Problème luminosité** : `emissiveIntensity: 1.15` insuffisante ; halos trop subtils (opacités 0.12/0.06)
+
+**Corrections appliquées :**
+1. `modelRegistry.ts` : `sun.textureFile = "/textures/sun.jpg"` (asset SDO réel)
+2. `src/App.tsx` composant `Sun` — matériau `createSunMesh()` :
+   - `emissive: "#fff8e7"` (blanc chaud), `emissiveIntensity: 2.5`, `emissiveMap: sunTexture`
+   - `map: sunTexture` (surface texturée), `toneMapped: false`, `side: THREE.DoubleSide`
+3. Halos/glow additifs renforcés (3 couches concentriques) :
+   - Échelle 1.15 : `#ffcc00`, opacity 0.18
+   - Échelle 1.08 : `#fff2cc`, opacity 0.12
+   - Échelle 1.03 : `#fff8e7`, opacity 0.08
+   - Tous : `AdditiveBlending`, `depthWrite=false`, `BackSide` — luminosité locale, pas d'exposition globale
+4. `PointLight` (intensity 2.8, decay 0) inchangé — source lumineuse planètes préservée
+
+**Résultat** : Soleil affiche texture SDO correctement projetée (pas de stretch grâce à `ClampToEdgeWrapping`), forte émission blanche/jaune-blanche, halos lumineux contrôlés, surface détaillée préservée. Visible en zoom rapproché et éloigné. Jour/nuit planètes inchangé.
+
+### Non-régression
+
+Tous systèmes LOCKED préservés : orbital V0.9.4, JPL V1.0.3, visualScale V1.2.0, trajectoires V1.3.1, éclairage jour/nuit V1.3.3, CameraController, OrbitControls, TimeControlBar, Focus Camera, sélection, damping, navigation, temps passé/futur, vitesses 0.1x/1x/5x/10x, responsive, Saturne/anneaux, étoiles.
+
 ## Visual Scale / Scene Mapping + Rendu spatial réaliste (V1.2.0)
 
 ### Visual Scale — `src/rendering/visualScale.ts`

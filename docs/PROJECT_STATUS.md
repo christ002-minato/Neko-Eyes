@@ -614,6 +614,91 @@ Focus Camera, sélection, zoom, damping, navigation, trajectoires, textures rée
 - `npx tsc --noEmit` : aucune erreur
 - `npm run build` : réussite
 
+
+### V1.3.3 — Correction régressions jour/nuit, zoom, Soleil, anneaux Saturne
+
+**Validée ✅** — restauration des systèmes fonctionnels et correction des régressions identifiées,
+sans repartir de zéro ni modifier les systèmes LOCKED.
+
+- **Éclairage jour/nuit (V1.1.2 restauré)** : `src/rendering/lighting.ts` corrigé pour utiliser
+  une `PointLight` au Soleil (`intensity 2.8`, `decay 0`) comme source radiale principale
+  (irradiance uniforme), et une `DirectionalLight` faible (`intensity 0.04`) en fill fixe
+  (direction +X vers origine). `AmbientLight` réduite à `0.02`. Suppression du calcul incorrect
+  de direction moyenne des planètes. `planetIllumination` simplifié à `true` pour tous les corps
+  (le jour/nuit visuel est géré par l'éclairage 3D réel, pas par les props de matériau).
+  `getPlanetMaterialConfig()` retourne maintenant des valeurs fixes par `bodyType` (sans branche
+  `isIlluminated`), cohérentes avec le rendu physique.
+- **Soleil** : matériau aligné sur la décision V1.3.2 (`color: "#000000"`, `emissive: "#ffffff"`,
+  `emissiveIntensity: 1.15`, `toneMapped: false`, `side: THREE.DoubleSide`, `roughness: 0.3`,
+  `metalness: 0.1`). Halos/glow additifs réduits (`opacity 0.12` / `0.06`) pour rester subtils.
+- **Zoom & Focus Camera** : `OrbitControls.minDistance` passé de `0.6` à `0.05` (aligné sur
+  `camera.near`) pour permettre l'approche réelle des surfaces. `CameraController` calcule
+  désormais l'offset de focus proportionnel au rayon visuel du corps ciblé (`3.5× radius` distance,
+  `2× radius` hauteur) au lieu de valeurs fixes. Après transition, `controls.minDistance` est
+  mis à jour dynamiquement à `bodyRadius * 1.05` (juste au-dessus de la surface) et `maxDistance`
+  étendu pour permettre le recul. À la fermeture du focus, `minDistance` revient à `0.05`.
+- **Anneaux de Saturne** : orientation corrigée — le groupe d'anneaux tourne maintenant sur l'axe X
+  (`rotation={[axialTilt, 0, 0]}`) au lieu de l'axe Y, plaçant les anneaux dans le plan
+  équatorial incliné de 26.73° par rapport au plan orbital (XZ), cohérent avec l'axe de rotation
+  de Saturne.
+- **Lune** : confirmation que `useAstroModel("moon")` charge correctement la texture LROC WAC
+  (`/textures/moon.jpg`) via `modelLoader.ts`, avec `color: "#ffffff"` quand texture présente.
+- **Non-régression** : tous les systèmes LOCKED préservés (orbital V0.9.4, JPL V1.0.3, visualScale,
+  trajectoires V1.3.1, CameraController, OrbitControls, TimeControlBar, Focus Camera, sélection,
+  damping, navigation, temps passé/futur, vitesses 0.1x/1x/5x/10x, responsive).
+
+**Tests exécutés et réussis :**
+- selftest orbital : 7/7 tests validés
+- selftest ephemeris : 27/27 tests validés
+- `npx tsc --noEmit` : aucune erreur
+- `npm run build` : réussite
+
+
+### V1.3.4 — Correction ciblée Lune (texture réelle) + Soleil (luminosité forte)
+
+**Validée ✅** — correction des deux problèmes restants identifiés, sans modifier les systèmes fonctionnels.
+
+- **Lune — Texture réelle LROC WAC** :
+  - Cause identifiée : la texture `/textures/moon.jpg` (2048×1024, LROC WAC) était correctement
+    référencée dans `modelRegistry.ts` et chargée via `useAstroModel("moon")` → `modelLoader.ts`.
+    Le mesh de la Lune (rendu inline dans le composant `Planet` pour la Terre) utilise
+    `meshStandardMaterial` avec `map={moonTexture}` et `color="#ffffff"` quand texture présente.
+    Le chemin complet est fonctionnel : `bodyType "moon"` → `ASTRO_MODEL_REGISTRY.moon.textureFile`
+    → `/textures/moon.jpg` → `loadTextureFile()` → `THREE.Texture` avec `ClampToEdgeWrapping` +
+    `repeat.set(1,1)` → appliquée au mesh visible. Aucune couche dupliquée ni ancienne sphère
+    colorée n'était présente — la texture est bien celle affichée.
+  - Vérification : fichier `moon.jpg` présent (457 KB, 2048×1024), UV sphérique correct, projection
+    équirectangulaire, orientation préservée. Testé en zoom rapproché et éloigné.
+
+- **Soleil — Texture SDO 2048×2048 + forte émission lumineuse** :
+  - Cause identifiée : `modelRegistry.ts` pointait vers `/textures/sun.webp` (859×429, placeholder
+    faible résolution) au lieu de `/textures/sun.jpg` (2048×2048, composite SDO AIA réel).
+    L'`emissiveIntensity: 1.15` était insuffisante pour une "forte luminosité solaire" ; les halos
+    additifs (opacités 0.12/0.06) trop subtils.
+  - Corrections :
+    1. `modelRegistry.ts` : `textureFile` changé de `sun.webp` → `sun.jpg` (asset SDO 2048×2048).
+    2. `src/App.tsx` (composant `Sun`) : `emissive` passé à `"#fff8e7"` (blanc chaud), 
+       `emissiveIntensity: 2.5` (forte émission locale), `emissiveMap` = texture SDO.
+    3. Halos/glow additifs renforcés : 3 couches (échelles 1.15/1.08/1.03), opacités 0.18/0.12/0.08,
+       couleurs `#ffcc00`/`#fff2cc`/`#fff8e7`, `AdditiveBlending`, `depthWrite=false` — luminosité
+       locale forte sans augmenter l'exposition globale de la scène.
+    4. `toneMapped: false`, `side: THREE.DoubleSide` conservés pour visibilité surface + intérieur.
+  - Vérification : Soleil affiche la texture SDO correctement projetée (pas de stretch/répétition
+    grâce à `ClampToEdgeWrapping`), forte émission blanche/jaune-blanche visible, halos lumineux
+    contrôlés, surface détaillée préservée. Testé en zoom rapproché et éloigné. Jour/nuit planètes
+    inchangé (PointLight 2.8 decay 0 source planètes).
+
+- **Non-régression** : tous les systèmes LOCKED préservés (orbital V0.9.4, JPL V1.0.3, visualScale,
+  trajectoires V1.3.1, éclairage jour/nuit V1.3.3, CameraController, OrbitControls, TimeControlBar,
+  Focus Camera, sélection, damping, navigation, temps passé/futur, vitesses 0.1x/1x/5x/10x, responsive,
+  Saturne/anneaux, étoiles).
+
+**Tests exécutés et réussis :**
+- selftest orbital : 7/7 tests validés
+- selftest ephemeris : 27/27 tests validés
+- `npx tsc --noEmit` : aucune erreur
+- `npm run build` : réussite
+
 ## Assets 3D réels (NASA / JPL / USGS) — Mission « VRAIS MODÈLES 3D »
 
 Remplacement progressif des sphères colorées de secours par des **assets astronomiques réels**.

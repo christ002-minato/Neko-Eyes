@@ -450,3 +450,100 @@
 - ✅ Aucune nouvelle dépendance ; aucune allocation/création de matériau dans `useFrame`.
 - ✅ Non-régression : `tsc --noEmit` 0 erreur ; `npm run build` réussite ; selftest orbital 7/7 ; selftest ephemeris 27/27.
 - ⚠️ Validation visuelle finale (rendu WebGL) à confirmer sur navigateur.
+
+
+## V1.3.3 — Correction régressions jour/nuit, zoom, Soleil, anneaux Saturne
+
+### Tests automatiques exécutés
+- ✅ selftest orbital : 7/7 tests validés (`npx jiti src/orbital/selftest.ts`)
+- ✅ selftest ephemeris : 27/27 tests validés (`npx jiti src/orbital/ephemeris/selftest.ts`)
+- ✅ `npx tsc --noEmit` : aucune erreur
+- ✅ `npm run build` : réussite
+
+### Corrections vérifiées par le code
+
+**Éclairage jour/nuit (`src/rendering/lighting.ts`) :**
+- ✅ `PointLight` au Soleil : `intensity 2.8`, `decay 0`, `distance 0` → irradiance uniforme, pas d'atténuation
+- ✅ `DirectionalLight` : `intensity 0.04`, position `[1000, 1000, 1000]`, target `[0,0,0]` → fill fixe direction +X
+- ✅ `AmbientLight` : `intensity 0.02` via `dayNightConfig.ambientIntensity`
+- ✅ Suppression du calcul `sunDir` moyenne des positions planétaires (incorrect)
+- ✅ `planetIllumination` : toutes `true` — jour/nuit visuel géré par éclairage 3D réel
+- ✅ `getPlanetMaterialConfig()` : valeurs fixes par `bodyType`, sans branche `isIlluminated`
+
+**Soleil (`src/App.tsx` composant `Sun`) :**
+- ✅ Matériau : `color "#000000"`, `emissive "#ffffff"`, `emissiveIntensity 1.15`, `toneMapped false`
+- ✅ `side: THREE.DoubleSide` pour visibilité depuis l'intérieur
+- ✅ `roughness 0.3`, `metalness 0.1` (cohérence `getMaterialConfig("sun")`)
+- ✅ Halos additifs : externe `opacity 0.12`, interne `opacity 0.06` (subtils, contrôlés)
+
+**Zoom & Focus Camera (`src/App.tsx`) :**
+- ✅ `OrbitControls.minDistance: 0.05` (était 0.6, aligné sur `camera.near`)
+- ✅ `CameraController.getBodyVisualRadius(bodyId)` : calcule rayon visuel du corps ciblé
+- ✅ Offset focus : `distance = bodyRadius * 3.5`, `height = bodyRadius * 2.0` (proportionnel au corps)
+- ✅ Post-transition : `controls.minDistance = bodyRadius * 1.05` (juste au-dessus surface)
+- ✅ Post-transition : `controls.maxDistance = max(existing, focusDistance * 4)` (recul possible)
+- ✅ Fermeture focus : `controls.minDistance = 0.05` (reset global)
+
+**Anneaux de Saturne (`src/App.tsx` composant `SaturnRings`) :**
+- ✅ Groupe rotation corrigé : `rotation={[axialTilt, 0, 0]}` (axe X) au lieu de `[0, axialTilt, 0]` (axe Y)
+- ✅ Anneaux maintenant dans le plan équatorial incliné 26.73° par rapport au plan orbital (XZ)
+
+**Lune :**
+- ✅ `useAstroModel("moon")` charge texture LROC WAC (`/textures/moon.jpg`) via `modelLoader.ts`
+- ✅ Matériau : `color: moonTexture ? "#ffffff" : moonData.color` → blanc neutre avec texture réelle
+
+### Non-régression confirmée
+- ✅ Modèle orbital V0.9.4 inchangé
+- ✅ JPL V1.0.3 inchangé
+- ✅ Visual Scale V1.2.0 inchangé
+- ✅ Trajectoires V1.3.1 inchangées
+- ✅ CameraController, OrbitControls, TimeControlBar, Focus Camera, sélection, damping, navigation
+- ✅ Temps passé/futur, vitesses 0.1x/1x/5x/10x, pause
+- ✅ Responsive
+
+
+## V1.3.4 — Correction ciblée Lune (texture réelle) + Soleil (luminosité forte)
+
+### Tests automatiques exécutés
+- ✅ selftest orbital : 7/7 tests validés (`npx jiti src/orbital/selftest.ts`)
+- ✅ selftest ephemeris : 27/27 tests validés (`npx jiti src/orbital/ephemeris/selftest.ts`)
+- ✅ `npx tsc --noEmit` : aucune erreur
+- ✅ `npm run build` : réussite
+
+### Corrections vérifiées par le code
+
+**Lune — Texture réelle LROC WAC :**
+- ✅ Fichier `/textures/moon.jpg` : JPEG 2048×1024, 457 KB, LROC WAC color map (NASA SVS 4720)
+- ✅ `modelRegistry.ts` : `moon.textureFile = "/textures/moon.jpg"` (correct)
+- ✅ `modelLoader.ts` : `loadTextureFile()` avec `ClampToEdgeWrapping`, `repeat.set(1,1)`, mipmaps
+- ✅ `useAstroModel("moon")` : charge texture via `loadAstroAsset()`, retourne `texture` non-null
+- ✅ Composant `Planet` (Terre) : rendu inline Lune avec `meshStandardMaterial`
+  - `color: moonTexture ? "#ffffff" : moonData.color` → blanc neutre avec texture
+  - `map: moonTexture ?? undefined` → texture appliquée au mesh visible
+  - `roughness/metalness` depuis `getMaterialConfig("moon")` (0.8/0.0)
+- ✅ Aucun mesh Lune dupliqué, aucune ancienne sphère colorée sous la texture
+- ✅ UV sphérique correct (équirectangulaire), projection sans stretch/répétition
+
+**Soleil — Texture SDO 2048×2048 + forte émission :**
+- ✅ Fichier `/textures/sun.jpg` : JPEG 2048×2048, 4.2 MB, composite SDO AIA (NASA SVS 11255)
+- ✅ `modelRegistry.ts` : `sun.textureFile` corrigé `sun.webp` → `sun.jpg`
+- ✅ Composant `Sun` : `createSunMesh()` avec matériau
+  - `color: "#000000"`, `emissive: "#fff8e7"`, `emissiveIntensity: 2.5`
+  - `emissiveMap: sunTexture`, `map: sunTexture` (surface + émission)
+  - `toneMapped: false`, `side: THREE.DoubleSide`, `roughness: 0.3`, `metalness: 0.1`
+- ✅ Halos/glow additifs (3 couches) : échelles 1.15/1.08/1.03, opacités 0.18/0.12/0.08
+  - Couleurs `#ffcc00`/`#fff2cc`/`#fff8e7`, `AdditiveBlending`, `depthWrite=false`
+  - Luminosité locale forte sans augmenter exposition globale scène
+- ✅ `PointLight` (intensity 2.8, decay 0) inchangé → source planètes préservée
+- ✅ Jour/nuit planètes inchangé (éclairage V1.3.3)
+
+### Non-régression confirmée
+- ✅ Modèle orbital V0.9.4 inchangé
+- ✅ JPL V1.0.3 inchangé
+- ✅ Visual Scale V1.2.0 inchangé
+- ✅ Trajectoires V1.3.1 inchangées
+- ✅ Éclairage jour/nuit V1.3.3 inchangé
+- ✅ CameraController, OrbitControls, TimeControlBar, Focus Camera, sélection, damping, navigation
+- ✅ Temps passé/futur, vitesses 0.1x/1x/5x/10x, pause
+- ✅ Responsive
+- ✅ Saturne/anneaux, étoiles inchangés

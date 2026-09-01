@@ -201,6 +201,13 @@ function getMoonOffset(time: number): [number, number, number] {
 
 // ── 3D Scene Components ───────────────────────────────────────────────────────
 
+function getBodyVisualRadius(bodyId: string): number {
+  const planet = PLANETS.find(p => p.id === bodyId)
+  if (planet) return mapBodySizeToVisual(planet.radius)
+  if (bodyId === 'sun') return mapBodySizeToVisual(SUN.radius)
+  return mapBodySizeToVisual(1)
+}
+
 function CameraController({
   focusTarget,
   focusPosition,
@@ -219,15 +226,26 @@ function CameraController({
   const currentFocus = useRef<string | null>(null)
   const prevCameraPos = useRef(new THREE.Vector3())
   const prevControlsTarget = useRef(new THREE.Vector3())
+  const minDistanceSet = useRef(false)
+  const prevFocusTarget = useRef<string | null>(null)
 
   useFrame(() => {
     if (!controlsRef.current) return
     const controls = controlsRef.current
 
-    if (isFocusing && focusPosition) {
+    if (prevFocusTarget.current !== focusTarget) {
+      if (focusTarget === null && prevFocusTarget.current !== null) {
+        controls.minDistance = 0.05
+        minDistanceSet.current = false
+      }
+      prevFocusTarget.current = focusTarget
+    }
+
+    if (isFocusing && focusPosition && focusTarget) {
       if (currentFocus.current !== focusTarget) {
         currentFocus.current = focusTarget
         lerpProgress.current = 0
+        minDistanceSet.current = false
         prevCameraPos.current.copy(camera.position)
         prevControlsTarget.current.copy(controls.target)
       }
@@ -235,19 +253,23 @@ function CameraController({
       lerpProgress.current = Math.min(lerpProgress.current + 0.018, 1)
       const t = lerpProgress.current * lerpProgress.current * (3 - 2 * lerpProgress.current)
 
-      const focusOffset = mapBodySizeToVisual(15)
-      const focusHeight = mapBodySizeToVisual(10)
+      const bodyRadius = getBodyVisualRadius(focusTarget)
+      const focusDistance = bodyRadius * 3.5
+      const focusHeight = bodyRadius * 2.0
       const targetPos = new THREE.Vector3(
-        focusPosition[0] + focusOffset,
+        focusPosition[0] + focusDistance,
         focusHeight,
-        focusPosition[2] + focusOffset,
+        focusPosition[2] + focusDistance,
       )
       camera.position.lerpVectors(prevCameraPos.current, targetPos, t)
       const lookTarget = new THREE.Vector3(focusPosition[0], focusPosition[1], focusPosition[2])
       controls.target.lerpVectors(prevControlsTarget.current, lookTarget, t)
       controls.update()
 
-      if (lerpProgress.current >= 1) {
+      if (lerpProgress.current >= 1 && !minDistanceSet.current) {
+        controls.minDistance = bodyRadius * 1.05
+        controls.maxDistance = Math.max(controls.maxDistance, focusDistance * 4)
+        minDistanceSet.current = true
         currentFocus.current = null
         onTransitionDone()
       }
@@ -281,23 +303,23 @@ function Sun({
   const sunInnerHaloRadius = visualSunRadius * 2.1
 
   const sunMesh = useMemo(() => createSunMesh({ position: [0, 0, 0], radius: visualSunRadius, color: SUN.color, bodyType: "sun" }, {
-    color: "#fff6d6",
-    emissive: "#ffb347",
+    color: "#000000",
+    emissive: "#fff8e7",
     emissiveMap: sunTexture ?? undefined,
-    emissiveIntensity: 2.2,
+    emissiveIntensity: 2.5,
     map: sunTexture ?? undefined,
-    roughness: 0.8,
-    metalness: 0.08,
+    roughness: 0.3,
+    metalness: 0.1,
     toneMapped: false,
-    side: THREE.FrontSide,
+    side: THREE.DoubleSide,
   }), [sunTexture, visualSunRadius])
 
   return (
     <group>
-      <mesh scale={1.05}>
+      <mesh scale={1.15}>
         <sphereGeometry args={[sunHaloRadius, 32, 32]} />
         <meshBasicMaterial
-          color="#ffaf3b"
+          color="#ffcc00"
           transparent
           opacity={0.18}
           side={THREE.BackSide}
@@ -305,12 +327,23 @@ function Sun({
           depthWrite={false}
         />
       </mesh>
-      <mesh scale={1.02}>
+      <mesh scale={1.08}>
         <sphereGeometry args={[sunInnerHaloRadius, 32, 32]} />
         <meshBasicMaterial
-          color="#ffd16a"
+          color="#fff2cc"
           transparent
-          opacity={0.1}
+          opacity={0.12}
+          side={THREE.BackSide}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+        />
+      </mesh>
+      <mesh scale={1.03}>
+        <sphereGeometry args={[visualSunRadius, 32, 32]} />
+        <meshBasicMaterial
+          color="#fff8e7"
+          transparent
+          opacity={0.08}
           side={THREE.BackSide}
           blending={THREE.AdditiveBlending}
           depthWrite={false}
@@ -613,7 +646,7 @@ function SaturnRings({ radius }: { radius: number }) {
   }, [bands, ringTexture])
 
   return (
-    <group rotation={[0, axialTilt, 0]}>
+    <group rotation={[axialTilt, 0, 0]}>
       {bands.map((b, idx) => (
         <mesh key={idx} geometry={b.geometry} rotation-x={-Math.PI / 2}>
           <meshStandardMaterial
@@ -845,7 +878,7 @@ function SolarSystemScene({
         makeDefault
         enableDamping
         dampingFactor={0.08}
-        minDistance={0.6}
+        minDistance={0.05}
         maxDistance={mapOrbitalDistanceToVisual(700)}
         maxPolarAngle={Math.PI * 0.85}
         minPolarAngle={Math.PI * 0.1}

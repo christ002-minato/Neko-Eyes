@@ -362,3 +362,43 @@
 - **Architecture respectée** : réutilisation `createSunMesh`/`createPlanetMesh`/`useSolarLighting`/`useAstroModel` ;
   aucune nouvelle dépendance ; aucune allocation dans `useFrame`.
 - **Validation** : `tsc --noEmit` 0 erreur, `npm run build` OK, selftest orbital 7/7, selftest ephemeris 27/27.
+
+
+## V1.3.3 — Correction régressions jour/nuit, zoom, Soleil, anneaux Saturne
+
+- **Éclairage jour/nuit (V1.1.2 restauré)** : `src/rendering/lighting.ts` corrigé — `PointLight` au Soleil
+  (`intensity 2.8`, `decay 0`) comme source radiale principale ; `DirectionalLight` faible (`0.04`) en
+  fill fixe ; `AmbientLight` à `0.02`. Suppression du calcul incorrect de direction moyenne des planètes.
+  `planetIllumination` simplifié à `true` pour tous les corps. `getPlanetMaterialConfig()` retourne
+  valeurs fixes par `bodyType` (sans branche `isIlluminated`).
+- **Soleil** : matériau aligné sur décision V1.3.2 (`color: "#000000"`, `emissive: "#ffffff"`,
+  `emissiveIntensity: 1.15`, `toneMapped: false`, `side: THREE.DoubleSide`, `roughness: 0.3`,
+  `metalness: 0.1`). Halos réduits (`opacity 0.12` / `0.06`).
+- **Zoom & Focus Camera** : `OrbitControls.minDistance` `0.6` → `0.05` (aligné `camera.near`).
+  `CameraController` : offset de focus proportionnel au rayon visuel (`3.5× radius` distance,
+  `2× radius` hauteur). Après transition, `controls.minDistance = bodyRadius * 1.05`,
+  `maxDistance` étendu. À la fermeture du focus, `minDistance` revient à `0.05`.
+- **Anneaux de Saturne** : orientation corrigée — rotation groupe sur axe X
+  (`rotation={[axialTilt, 0, 0]}`) pour plan équatorial incliné 26.73°.
+- **Lune** : confirmation chargement texture LROC WAC via `useAstroModel("moon")`.
+- **Non-régression** : tous systèmes LOCKED préservés (orbital V0.9.4, JPL V1.0.3, visualScale,
+  trajectoires V1.3.1, CameraController, OrbitControls, TimeControlBar, Focus Camera, sélection,
+  damping, navigation, temps passé/futur, vitesses 0.1x/1x/5x/10x, responsive).
+
+- **Tests** : selftest orbital 7/7, selftest ephemeris 27/27, `tsc --noEmit` 0 erreur, `npm run build` OK.
+
+
+## V1.3.4 — Correction ciblée Lune (texture réelle) + Soleil (luminosité forte)
+
+- **Lune** : vérification complète du chemin texture — `bodyType "moon"` → `modelRegistry.ts`
+  (`textureFile: "/textures/moon.jpg"`, 2048×1024 LROC WAC) → `modelLoader.ts` → `useAstroModel("moon")`
+  → `meshStandardMaterial` avec `map={moonTexture}`, `color="#ffffff"`. Mesh unique rendu inline
+  dans `Planet` (Terre), pas de couche dupliquée. Texture appliquée au mesh visible.
+- **Soleil** : 
+  1. `modelRegistry.ts` : `textureFile` `sun.webp` (859×429 placeholder) → `sun.jpg` (2048×2048 SDO).
+  2. `src/App.tsx` (`Sun`) : `emissive "#fff8e7"`, `emissiveIntensity 2.5`, `emissiveMap` = texture SDO.
+  3. Halos renforcés : 3 couches (échelles 1.15/1.08/1.03), opacités 0.18/0.12/0.08, `AdditiveBlending`.
+  4. `toneMapped: false`, `side: DoubleSide` conservés.
+- **Non-régression** : tous systèmes LOCKED préservés.
+
+- **Tests** : selftest orbital 7/7, selftest ephemeris 27/27, `tsc --noEmit` 0 erreur, `npm run build` OK.
