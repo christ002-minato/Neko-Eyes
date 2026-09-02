@@ -385,3 +385,174 @@ planètes** ; son `THREE.PointLight` reste la source lumineuse des planètes (in
 désormais `SaturnRings` (plusieurs `RingGeometry` concentriques bandées, orientées plan équatorial,
 éclairées par la scène) plutôt que l'ancien anneau plat unique non éclairé. Les planètes/Lune utilisent
 un `color` blanc neutre quand la vraie texture est présente (couleurs naturelles, non saturées).
+
+## Temps astronomique réel + Jour/Nuit réaliste (V1.4.0)
+
+### Module `src/rendering/astronomicalTime.ts`
+
+Nouveau module utilitaire pour les calculs de temps astronomique, indépendant de Three.js/React.
+
+**Responsabilités :**
+- Conversion temps simulé (`simTime`, heures depuis époque) ↔ date UTC, date julienne
+- Calcul GMST (Greenwich Mean Sidereal Time)
+- Position du Soleil : longitude écliptique, déclinaison, ascension droite
+- Point subsolaire (latitude/longitude sur Terre où le Soleil est au zénith)
+- Angle de rotation initial de la Terre à l'époque pour cohérence jour/nuit
+- Formatage dates/heures pour l'affichage UI
+
+**API :**
+- `simulationTimeToUTC(simTime)` → `Date`
+- `simulationTimeToJulianDate(simTime)` → `number`
+- `calculateGMST(julianDate)` → `number` (radians)
+- `calculateSunDeclinationRightAscension(julianDate)` → `{ dec, ra }`
+- `calculateSubsolarPoint(simTime, earthPosition)` → `{ latitude, longitude } | null`
+- `calculateInitialEarthRotationAngle(earthPositionAtEpoch)` → `number` (radians)
+- `getAstronomicalTime(simTime, earthPosition)` → objet complet
+- `formatUTCDate(date)`, `formatSimulationTime(simTime)` → strings
+- `getBodyOrbitalElements(bodyId)` → éléments orbitaux de référence
+
+**Contraintes respectées :**
+- Aucune dépendance Three.js/React
+- Aucun fetch réseau
+- Calculs purs, déterministes, réutilisables
+- Époque de référence : 2025-08-19 00:00:00 UTC (simTime = 0)
+
+### Jour/Nuit réaliste — `src/rendering/lighting.ts` (mise à jour)
+
+**`createSunLight(sunPosition, earthPosition)` :**
+- Calcule `daylightDirection` = vecteur normalisé Soleil → Terre (`earthPosition - sunPosition`)
+- Remplace l'ancienne direction fixe `(-1, 0, 0)`
+- La direction est recalculée chaque frame via `useSolarLighting()` avec les positions planétaires actuelles
+
+**`useSolarLighting(sunPosition, planetPositions)` :**
+- Extrait `earthPosition = planetPositions.earth`
+- Appelle `createSunLight()` avec la position Terre réelle
+- Retourne `sunDirection` pour le panneau d'informations
+- `planetIllumination` calculé via `isBodyIlluminated()` pour chaque corps
+
+**Résultat :** La frontière jour/nuit se déplace progressivement sur la Terre (et tous les corps) lorsque le temps avance, cohérente avec la position astronomique réelle du Soleil.
+
+### Rotation terrestre cohérente
+
+**Angle initial (`calculateInitialEarthRotationAngle`) :**
+- Calcule l'angle de rotation initial à simTime=0 pour que le point subsolaire réel fasse face au Soleil
+- Utilise la position Terre à l'époque + GMST + ascension droite du Soleil
+- Aligne la rotation visuelle sur la réalité astronomique
+
+**Composant `Planet` (Terre) :**
+- Reçoit `initialRotationAngle={earthInitialRotationAngle}` via props
+- `getRotationAngle(time, 23.934, initialRotationAngle)` → rotation pilotée par `simTime`
+- Fonctionne avec toutes les vitesses (0.1x/1x/5x/10x), pause, passé/futur
+
+### Panneau "Plus d'informations" — `ObjectInfoPanel` (mise à jour)
+
+**Nouvelles données affichées (toggle "More Info") :**
+- Diamètre, périodes orbitale/rotation, excentricité, inclinaison
+- Position actuelle (X, Y, Z), vitesse orbitale estimée
+- Date/heure UTC simulée, temps de simulation
+- Statut JPL : "Active" ou "Fallback (orbital model)"
+- **Terre spécifique** : point subsolaire (lat/lon), direction Soleil, heure simulée
+
+**Architecture :**
+- Calculs astronomiques via `useMemo` dans `ExplorerSection` (partagés avec `SolarSystemScene`)
+- Pas de duplication : `planetPositions`, `sunDirection`, `subsolarPoint` calculés une fois par frame
+- Transmis aux composants UI via props
+
+### TimeControlBar (mise à jour)
+
+- Affiche la date/heure UTC simulée (ex: "2025-08-19 15:26:00 UTC") au lieu de l'époque fixe
+- Met à jour en temps réel avec `simTime`
+- Distinction claire : temps de simulation vs date astronomique vs vitesse
+
+### Performance
+
+- `useMemo` pour tous les calculs astronomiques (réexécution seulement si `simTime` ou positions JPL changent)
+- Aucun calcul lourd dans `useFrame`
+- Réutilisation des vecteurs Three.js (`sunDirection` calculé une fois par frame)
+- Pas de fetch réseau dans la boucle de rendu
+
+### Non-régression
+
+Tous systèmes LOCKED préservés : orbital V0.9.4, JPL V1.0.3, visualScale V1.2.0, textures V1.1.1, Soleil V1.3.4, Lune, Saturne/anneaux V1.3.2, trajectoires V1.3.1, étoiles V1.3.1, CameraController, OrbitControls, Focus Camera, zoom, damping, sélection, TimeControlBar, responsive.
+
+## V1.4.1 — Stabilisation avant le style
+
+### Rotation astronomique (lisse et déterministe)
+
+- **Formule** (inchangée, `src/rendering/rotation.ts`) :
+  `angle = initialAngle + (simulationTime / rotationPeriod) × 2π`
+  — unités : `simulationTime` en heures simulées, `rotationPeriod` en heures (valeurs
+  astronomiques réelles, négatives = rétrograde). Aucune intégration cumulative.
+- **Correction du flux temps → composants** : auparavant, `Sun`/`Planet` (et la Lune)
+  appliquaient la rotation dans `useFrame` avec la prop `time` figée au dernier rendu React
+  (un rendu toutes les 6 frames via `onTimeUpdate`). La rotation sautait par paliers.
+- **Désormais** : les composants reçoivent le ref vivant `timeRef` et lisent `timeRef.current`
+  dans `useFrame`. La rotation reste une fonction pure de `simulationTime`, mais suit le temps
+  à la frame près. Pause = aucune évolution ; passé/futur = recomposition exacte ;
+  0.1x/1x/5x/10x = accélération du temps simulé seulement.
+- **Périodes en vigueur** (heures simulées) : Soleil 609,12 · Mercure 1407,6 ·
+  Vénus −5832,5 (rétrograde) · Terre 23,934 (jour sidéral) · Mars 24,623 · Jupiter 9,925 ·
+  Saturne 10,656 · Lune 655,72 (rotation synchrone/verrouillage de marée).
+- **Angle initial Terre** : `calculateInitialEarthRotationAngle()` aligne le point subsolaire
+  astronomique (GMST + RA + déclinaison) vers le Soleil à l'époque ; la rotation ultérieure
+  conserve cet alignement (2π par jour sidéral).
+
+### Jour/nuit
+
+- Lumière : `PointLight` au Soleil (intensité 2,8, decay 0) source radiale ; `ambientLight` 0,02 ;
+  `DirectionalLight` 0,04 en fill. Le GPU produit jour → crépuscule → nuit via les normales du
+  globe (aucune zone peinte sur la texture).
+- La direction Soleil→Terre est recalculée depuis les positions (JPL ou fallback orbital)
+  et la rotation du globe tourne sous la lumière → le terminateur se déplace naturellement
+  avec l'heure simulée.
+
+## V1.5.0 — Temps réel, horloge locale, epoch dynamique
+
+### Modèle temporel (cause racine corrigée)
+
+- **Ancienne relation (défaut 3600×)** :
+  `simTime += delta_réel_s × speed` (delta en secondes réelles),
+  `simulationTimeToUTC(simTime)` = `epoch + simTime × 3600000` ms (simTime en heures).
+  À ×1 : 1 seconde réelle = 1 heure simulée → la Terre tournait en ~24 s réelles.
+- **Nouvelle relation** :
+  `simTime += (delta_réel_s × speed) / 3600`
+  → à ×1 : 1 seconde réelle = 1/3600 h = 1 seconde simulée (temps réel).
+  Les formules restent en heures : rotation, orbital, JPL — aucune conversion heure↔seconde.
+
+### Epoch dynamique (`src/time.ts`)
+
+- Module partagé capturant `Date.now()` une seule fois au chargement (`SIMULATION_EPOCH_MS`).
+- Importé par `astronomicalTime.ts` et `jplProvider.ts` — source unique de vérité.
+- L'ancien epoch fixe `2025-08-19` est remplacé ; à ×1, l'horloge affiche l'heure locale réelle.
+
+### Affichage local + UTC
+
+- TimeControlBar : horloge locale (`toLocaleString()`) principale, UTC secondaire.
+- ObjectInfoPanel : Local Time et UTC affichés séparément.
+
+### Throttling JPL
+
+- `useEffect` JPL dépendent de `[jplDayId]` (`simulationTimeToDayId(simTime)`) au lieu de `[simTime]`.
+- Un fetch par jour simulé (pas par frame). Pas de fetch réseau dans la boucle de rendu.
+
+### Bouton « More Info » (Voir plus)
+
+- Anciennement codé en dur : `isDetailOpen={false}`, `onDetailToggle={() => {}}`.
+- Désormais `ExplorerSection` possède l'état `isDetailOpen` ; le toggle l'inverse et il est
+  réinitialisé à chaque changement de corps sélectionné (`handleSelectPlanet`).
+
+### Lune — texture réelle
+
+- Mesh unique : sphère 16×16 dans le composant `Planet` (branche Terre). Aucun doublon.
+- Chemin texture : `modelRegistry.ts` (`/textures/moon.jpg`, LROC WAC 2048×1024) →
+  `modelLoader.ts` (sRGB, ClampToEdge, mipmaps) → `useAstroModel("moon")` → `map` du
+  `meshStandardMaterial` (`color="#ffffff"` quand texture présente).
+- UV : équirectangulaires standards de `SphereGeometry` ; la rotation est appliquée au groupe
+  parent, les UV ne sont pas altérés.
+
+### Nouvelles responsabilités
+
+- `src/rendering/rotationSelftest.ts` — selftest (15 tests) de la rotation déterministe,
+  exécutable via `npx jiti src/rendering/rotationSelftest.ts`.
+- `App.tsx` — passage de `timeRef` aux composants `Sun`/`Planet` ; état `isDetailOpen` ;
+  `handleSelectPlanet` centralise la sélection (reset du détail).

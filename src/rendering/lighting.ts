@@ -15,7 +15,7 @@ export type PlanetMaterialConfig = {
 
 export function createSunLight(
   sunPosition: [number, number, number],
-  _planetPositions: Record<string, [number, number, number]>
+  earthPosition: [number, number, number]
 ): SolarLighting {
   const light = new THREE.DirectionalLight(0xffffff, 0.04)
 
@@ -28,9 +28,15 @@ export function createSunLight(
   pointLight.position.set(sunPosition[0], sunPosition[1], sunPosition[2])
   pointLight.castShadow = false
 
+  const sunToEarth = new THREE.Vector3(
+    earthPosition[0] - sunPosition[0],
+    earthPosition[1] - sunPosition[1],
+    earthPosition[2] - sunPosition[2]
+  ).normalize()
+
   const dayNightConfig: DayNightConfig = {
     hasDaylight: true,
-    daylightDirection: new THREE.Vector3(-1, 0, 0).normalize(),
+    daylightDirection: sunToEarth,
     ambientIntensity: 0.02,
     directIntensity: 2.8,
   }
@@ -39,10 +45,12 @@ export function createSunLight(
 }
 
 export function isBodyIlluminated(
-  _bodyPosition: [number, number, number],
-  _sunDirection: THREE.Vector3
+  bodyPosition: [number, number, number],
+  sunDirection: THREE.Vector3
 ): boolean {
-  return true
+  const bodyVec = new THREE.Vector3(bodyPosition[0], bodyPosition[1], bodyPosition[2])
+  const direction = sunDirection.clone().normalize()
+  return bodyVec.clone().normalize().dot(direction) > 0
 }
 
 export function getPlanetMaterialConfig(
@@ -85,14 +93,21 @@ export function useSolarLighting(
   sunPosition: [number, number, number],
   planetPositions: Record<string, [number, number, number]>
 ) {
-  const { light, pointLight, dayNightConfig } = createSunLight(sunPosition, planetPositions)
+  const earthPosition = planetPositions.earth ?? [0, 0, 0]
+  const { light, pointLight, dayNightConfig } = createSunLight(sunPosition, earthPosition)
 
   const planetIllumination: Record<string, boolean> = {}
   const knownBodies = ["earth", "moon", "mars", "jupiter", "saturn", "uranus", "neptune", "mercury", "venus", "sun"]
 
+  const sunDirection = dayNightConfig.daylightDirection
+
   for (const bodyId of knownBodies) {
     if (planetPositions[bodyId] || bodyId === "sun") {
-      planetIllumination[bodyId] = true
+      if (bodyId === "sun") {
+        planetIllumination[bodyId] = true
+      } else {
+        planetIllumination[bodyId] = isBodyIlluminated(planetPositions[bodyId], sunDirection)
+      }
     }
   }
 
@@ -101,5 +116,6 @@ export function useSolarLighting(
     pointLight,
     dayNightConfig,
     planetIllumination,
+    sunDirection,
   }
 }

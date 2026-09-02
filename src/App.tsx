@@ -5,8 +5,9 @@ import * as THREE from 'three'
 import nekoLogo from '@/imports/neko_eyer_logo.png'
 import { JPLProvider } from '@/orbital/ephemeris'
 import { defineOrbitalSystem, getBodyPosition } from '@/orbital'
-import { useSolarLighting, mapOrbitalDistanceToVisual, mapBodySizeToVisual, mapOrbitalPositionToVisual, getMaterialConfig, getRotationAngle, createPlanetMesh, createSunMesh, getTrajectoryConfig, createOrbitTrajectory, disposeOrbitTrajectory, type BodyType, getPlanetMaterialConfig } from "@/rendering"
+import { useSolarLighting, mapOrbitalDistanceToVisual, mapBodySizeToVisual, mapOrbitalPositionToVisual, getMaterialConfig, getRotationAngle, createPlanetMesh, createSunMesh, getTrajectoryConfig, createOrbitTrajectory, disposeOrbitTrajectory, type BodyType, getPlanetMaterialConfig, calculateInitialEarthRotationAngle, getBodyOrbitalElements, simulationTimeToUTC, calculateSubsolarPoint } from "@/rendering"
 import { useAstroModel } from "@/rendering/models"
+import { simulationTimeToDayId, formatLocalTime, formatUTCTime } from "@/time"
 
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -280,11 +281,11 @@ function CameraController({
 }
 
 function Sun({
-  time,
+  timeRef,
   selectedId,
   onSelect,
 }: {
-  time: number
+  timeRef: React.RefObject<number>
   selectedId: string | null
   onSelect: (p: Planet) => void
 }) {
@@ -292,9 +293,9 @@ function Sun({
   const isSelected = selectedId === 'sun'
   const { texture: sunTexture } = useAstroModel("sun")
 
-  useFrame((_, delta) => {
+  useFrame(() => {
     if (meshRef.current) {
-      meshRef.current.rotation.y = getRotationAngle(time, SUN.rotationPeriod ?? 0)
+      meshRef.current.rotation.y = getRotationAngle(timeRef.current, SUN.rotationPeriod ?? 0)
     }
   })
 
@@ -389,6 +390,7 @@ function Sun({
 function Planet({
   planet,
   time,
+  timeRef,
   selectedId,
   onSelect,
   selectedMoon,
@@ -398,9 +400,11 @@ function Planet({
   bodyType,
   illuminated,
   moonIlluminated,
+  initialRotationAngle = 0,
 }: {
   planet: Planet
   time: number
+  timeRef: React.RefObject<number>
   selectedId: string | null
   onSelect: (p: Planet) => void
   selectedMoon: boolean
@@ -410,6 +414,7 @@ function Planet({
   bodyType?: BodyType
   illuminated?: boolean
   moonIlluminated?: boolean
+  initialRotationAngle?: number
 }) {
   const meshRef = useRef<THREE.Mesh>(null)
   const moonMeshRef = useRef<THREE.Mesh>(null)
@@ -423,12 +428,12 @@ function Planet({
     return bodyType ? getMaterialConfig(bodyType) : { roughness: 0.7, metalness: 0.1 }
   }, [bodyType, illuminated])
 
-  useFrame((_, delta) => {
+  useFrame(() => {
     if (meshRef.current) {
-      meshRef.current.rotation.y = getRotationAngle(time, planet.rotationPeriod ?? 0)
+      meshRef.current.rotation.y = getRotationAngle(timeRef.current, planet.rotationPeriod ?? 0, initialRotationAngle)
     }
     if (moonMeshRef.current) {
-      moonMeshRef.current.rotation.y = getRotationAngle(time, moonData.rotationPeriod ?? 0)
+      moonMeshRef.current.rotation.y = getRotationAngle(timeRef.current, moonData.rotationPeriod ?? 0)
     }
   })
 
@@ -807,9 +812,18 @@ function SolarSystemScene({
   const timeRef = useRef(0)
   const frameCount = useRef(0)
 
+  const earthInitialRotationAngle = useMemo(() => {
+    const earthAtEpoch = jplEarthPosition
+      ? mapOrbitalPositionToVisual(jplEarthPosition)
+      : mapOrbitalPositionToVisual(getBodyPosition(ORBITAL_BODY_BY_ID.get('earth')!, 0))
+    return calculateInitialEarthRotationAngle(earthAtEpoch)
+  }, [jplEarthPosition])
+
   useFrame((_, delta) => {
     if (isPlaying) {
-      timeRef.current += delta * timeSpeed
+      // delta est en secondes réelles ; simulationTime est en heures.
+      // À ×1 : 1 s réelle = 1/3600 h = 1 s simulée (temps réel).
+      timeRef.current += (delta * timeSpeed) / 3600
     }
     frameCount.current++
     if (frameCount.current % 6 === 0) {
@@ -887,7 +901,7 @@ function SolarSystemScene({
       />
 
       <Sun
-        time={timeRef.current}
+        timeRef={timeRef}
         selectedId={selectedPlanet?.id ?? null}
         onSelect={onSelectPlanet}
       />
@@ -899,6 +913,7 @@ function SolarSystemScene({
               key={p.id}
               planet={p}
               time={timeRef.current}
+              timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
@@ -908,6 +923,7 @@ function SolarSystemScene({
               bodyType="earth"
               illuminated={planetIllumination.earth}
               moonIlluminated={planetIllumination.moon}
+              initialRotationAngle={earthInitialRotationAngle}
             />
           )
         }
@@ -917,6 +933,7 @@ function SolarSystemScene({
               key={p.id}
               planet={p}
               time={timeRef.current}
+              timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
@@ -933,6 +950,7 @@ function SolarSystemScene({
               key={p.id}
               planet={p}
               time={timeRef.current}
+              timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
@@ -949,6 +967,7 @@ function SolarSystemScene({
               key={p.id}
               planet={p}
               time={timeRef.current}
+              timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
@@ -965,6 +984,7 @@ function SolarSystemScene({
               key={p.id}
               planet={p}
               time={timeRef.current}
+              timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
@@ -981,6 +1001,7 @@ function SolarSystemScene({
               key={p.id}
               planet={p}
               time={timeRef.current}
+              timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
@@ -997,6 +1018,7 @@ function SolarSystemScene({
               key={p.id}
               planet={p}
               time={timeRef.current}
+              timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
@@ -1013,6 +1035,7 @@ function SolarSystemScene({
               key={p.id}
               planet={p}
               time={timeRef.current}
+              timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
@@ -1028,6 +1051,7 @@ function SolarSystemScene({
             key={p.id}
             planet={p}
             time={timeRef.current}
+            timeRef={timeRef}
             selectedId={selectedPlanet?.id ?? null}
             onSelect={onSelectPlanet}
             selectedMoon={selectedPlanet?.id === 'moon'}
@@ -1093,16 +1117,34 @@ function ObjectInfoPanel({
   planet,
   onClose,
   onFocus,
+  simTime,
+  jplPositions,
+  planetPositions,
+  sunDirection,
+  subsolarPoint,
+  isDetailOpen,
+  onDetailToggle,
 }: {
   planet: Planet | null
   onClose: () => void
   onFocus: () => void
+  simTime: number
+  jplPositions: Record<string, [number, number, number] | null | undefined>
+  planetPositions: Record<string, [number, number, number]>
+  sunDirection: THREE.Vector3 | null
+  subsolarPoint: { latitude: number; longitude: number } | null
+  isDetailOpen: boolean
+  onDetailToggle: () => void
 }) {
   if (!planet) return null
   const isMoon = planet.id === 'moon'
+  const orbitalElements = getBodyOrbitalElements(planet.id)
+  const position = planetPositions[planet.id]
+  const jplPosition = jplPositions[planet.id]
+  const hasJPL = !!jplPosition
 
   return (
-    <GlassPanel className="p-4 w-64 md:w-[280px]">
+    <GlassPanel className="p-4 w-64 md:w-[280px] max-h-[80vh] overflow-y-auto">
       <div className="flex justify-between items-start mb-3">
         <div className="min-w-0">
           <div className="text-[10px] font-mono text-nk-cyan/65 uppercase tracking-[0.15em] truncate">
@@ -1147,17 +1189,118 @@ function ObjectInfoPanel({
         ))}
       </div>
 
-      <div className="flex gap-2">
-        <button
-          onClick={onFocus}
-          className="flex-1 text-[11px] font-mono py-2 rounded-lg bg-nk-cyan/15 text-nk-cyan border border-nk-cyan/30 hover:bg-nk-cyan/25 hover:shadow-[0_0_12px_rgba(0,216,255,0.15)] transition-all"
-        >
-          Focus Camera
-        </button>
-        <button className="flex-1 text-[11px] font-mono py-2 rounded-lg glass-light border border-white/10 text-stellar-dim hover:text-stellar hover:border-white/18 transition-all">
-          More Info
-        </button>
-      </div>
+      <button
+        onClick={onDetailToggle}
+        className="w-full text-[11px] font-mono py-2 rounded-lg glass-light border border-white/10 text-stellar-dim hover:text-stellar hover:border-white/18 transition-all flex items-center justify-center gap-2"
+      >
+        {isDetailOpen ? 'Less Info' : 'More Info'}
+        <span>{isDetailOpen ? '▲' : '▼'}</span>
+      </button>
+
+      {isDetailOpen && (
+        <div className="mt-3 space-y-2 text-[10px] font-mono">
+          <div className="text-nk-cyan/65 uppercase tracking-[0.15em] border-b border-white/10 pb-1">
+            Astronomical Data
+          </div>
+          
+          <div className="grid grid-cols-2 gap-1.5">
+            {(() => {
+              const rows: [string, string][] = [
+                ['Diameter', `${(planet.radius * 2 * 6371).toFixed(0)} km`],
+                ['Orbital Period', orbitalElements.period > 0 ? `${(orbitalElements.period / 24).toFixed(1)} days` : '—'],
+                ['Rotation Period', planet.rotationPeriod ? `${planet.rotationPeriod.toFixed(2)} h` : '—'],
+                ['Eccentricity', orbitalElements.eccentricity > 0 ? orbitalElements.eccentricity.toFixed(4) : '0 (circular)'],
+                ['Inclination', orbitalElements.inclination > 0 ? `${(orbitalElements.inclination * 180 / Math.PI).toFixed(2)}°` : '0° (ecliptic)'],
+                ['Semi-major Axis', orbitalElements.semiMajorAxis > 0 ? `${orbitalElements.semiMajorAxis.toFixed(3)} AU` : '—'],
+              ]
+              
+              if (position) {
+                const dist = Math.sqrt(position[0]**2 + position[1]**2 + position[2]**2)
+                rows.push(['Current Distance', `${dist.toFixed(2)} scene units`])
+              }
+              
+              if (hasJPL && jplPosition) {
+                const jplDist = Math.sqrt(jplPosition[0]**2 + jplPosition[1]**2 + jplPosition[2]**2)
+                rows.push(['JPL Distance', `${jplDist.toFixed(6)} AU`])
+              }
+              
+              if (planet.id === 'earth' && subsolarPoint) {
+                rows.push(['Subsolar Lat', `${subsolarPoint.latitude.toFixed(2)}°`])
+                rows.push(['Subsolar Lon', `${subsolarPoint.longitude.toFixed(2)}°`])
+              }
+              
+              if (orbitalElements.period > 0 && orbitalElements.semiMajorAxis > 0) {
+                const orbitalSpeed = 2 * Math.PI * orbitalElements.semiMajorAxis / (orbitalElements.period / 24) * 29.78 / Math.sqrt(orbitalElements.semiMajorAxis)
+                rows.push(['Orbital Speed', `${orbitalSpeed.toFixed(2)} km/s`])
+              }
+
+              return rows.map(([label, value]) => (
+                <div key={label} className="bg-white/5 rounded-lg p-2 border border-white/4 col-span-2">
+                  <div className="text-[9px] text-stellar-dim/45 uppercase tracking-wider">{label}</div>
+                  <div className="text-[10px] text-stellar font-mono mt-0.5 leading-snug">{value}</div>
+                </div>
+              ))
+            })()}
+          </div>
+
+          <div className="text-nk-cyan/65 uppercase tracking-[0.15em] border-b border-white/10 pb-1 mt-2">
+            Time & Position
+          </div>
+          
+          <div className="grid grid-cols-2 gap-1.5">
+            <div className="bg-white/5 rounded-lg p-2 border border-white/4 col-span-2">
+              <div className="text-[9px] text-stellar-dim/45 uppercase tracking-wider">Local Time</div>
+              <div className="text-[10px] text-stellar font-mono mt-0.5 leading-snug">{formatLocalTime(simulationTimeToUTC(simTime))}</div>
+            </div>
+            <div className="bg-white/5 rounded-lg p-2 border border-white/4 col-span-2">
+              <div className="text-[9px] text-stellar-dim/45 uppercase tracking-wider">UTC</div>
+              <div className="text-[10px] text-stellar/70 font-mono mt-0.5 leading-snug">{formatUTCTime(simulationTimeToUTC(simTime))}</div>
+            </div>
+            <div className="bg-white/5 rounded-lg p-2 border border-white/4 col-span-2">
+              <div className="text-[9px] text-stellar-dim/45 uppercase tracking-wider">Sim Time</div>
+              <div className="text-[10px] text-stellar font-mono mt-0.5 leading-snug">{simTime >= 0 ? '+' : ''}{simTime.toFixed(1)} h from epoch</div>
+            </div>
+            {position && (
+              <>
+                <div className="bg-white/5 rounded-lg p-2 border border-white/4">
+                  <div className="text-[9px] text-stellar-dim/45 uppercase tracking-wider">X</div>
+                  <div className="text-[10px] text-stellar font-mono mt-0.5 leading-snug">{position[0].toFixed(3)}</div>
+                </div>
+                <div className="bg-white/5 rounded-lg p-2 border border-white/4">
+                  <div className="text-[9px] text-stellar-dim/45 uppercase tracking-wider">Y</div>
+                  <div className="text-[10px] text-stellar font-mono mt-0.5 leading-snug">{position[1].toFixed(3)}</div>
+                </div>
+                <div className="bg-white/5 rounded-lg p-2 border border-white/4">
+                  <div className="text-[9px] text-stellar-dim/45 uppercase tracking-wider">Z</div>
+                  <div className="text-[10px] text-stellar font-mono mt-0.5 leading-snug">{position[2].toFixed(3)}</div>
+                </div>
+              </>
+            )}
+            {sunDirection && (
+              <div className="bg-white/5 rounded-lg p-2 border border-white/4 col-span-2">
+                <div className="text-[9px] text-stellar-dim/45 uppercase tracking-wider">Sun Dir</div>
+                <div className="text-[10px] text-stellar font-mono mt-0.5 leading-snug">({sunDirection.x.toFixed(3)}, {sunDirection.y.toFixed(3)}, {sunDirection.z.toFixed(3)})</div>
+              </div>
+            )}
+            {planet.id === 'earth' && subsolarPoint && (
+              <>
+                <div className="bg-white/5 rounded-lg p-2 border border-white/4">
+                  <div className="text-[9px] text-stellar-dim/45 uppercase tracking-wider">Subsolar Lat</div>
+                  <div className="text-[10px] text-stellar font-mono mt-0.5 leading-snug">{subsolarPoint.latitude.toFixed(2)}°</div>
+                </div>
+                <div className="bg-white/5 rounded-lg p-2 border border-white/4">
+                  <div className="text-[9px] text-stellar-dim/45 uppercase tracking-wider">Subsolar Lon</div>
+                  <div className="text-[10px] text-stellar font-mono mt-0.5 leading-snug">{subsolarPoint.longitude.toFixed(2)}°</div>
+                </div>
+              </>
+            )}
+            <div className="bg-white/5 rounded-lg p-2 border border-white/4 col-span-2">
+              <div className="text-[9px] text-stellar-dim/45 uppercase tracking-wider">JPL Status</div>
+              <div className="text-[10px] text-stellar font-mono mt-0.5 leading-snug">{hasJPL ? 'Active' : 'Fallback (orbital model)'}</div>
+            </div>
+          </div>
+        </div>
+      )}
     </GlassPanel>
   )
 }
@@ -1167,11 +1310,13 @@ function TimeControlBar({
   onToggle,
   speed,
   onSpeedChange,
+  simTime,
 }: {
   isPlaying: boolean
   onToggle: () => void
   speed: number
   onSpeedChange: (v: number) => void
+  simTime: number
 }) {
   const presets = [
     { v: 0.1, label: '×0.1' },
@@ -1180,11 +1325,22 @@ function TimeControlBar({
     { v: 10, label: '×10' },
   ]
 
+  const utcDate = simulationTimeToUTC(simTime)
+  const localString = formatLocalTime(utcDate)
+  const utcString = formatUTCTime(utcDate)
+
   return (
     <GlassPanel className="px-4 py-2.5 flex items-center gap-4 flex-wrap">
       <div className="text-[10px] font-mono leading-tight flex-shrink-0">
-        <div className="text-nk-cyan/50 uppercase tracking-[0.12em]">Epoch</div>
-        <div className="text-stellar mt-0.5">2025 · 08 · 19</div>
+        <div className="text-nk-cyan/50 uppercase tracking-[0.12em]">Local Time</div>
+        <div className="text-stellar mt-0.5">{localString}</div>
+      </div>
+
+      <div className="w-px h-7 bg-white/8 flex-shrink-0" />
+
+      <div className="text-[10px] font-mono leading-tight flex-shrink-0">
+        <div className="text-nk-cyan/50 uppercase tracking-[0.12em]">UTC</div>
+        <div className="text-stellar/70 mt-0.5">{utcString}</div>
       </div>
 
       <div className="w-px h-7 bg-white/8 flex-shrink-0" />
@@ -1615,7 +1771,11 @@ function ExplorerSection() {
   const [focusTarget, setFocusTarget] = useState<string | null>(null)
   const [focusPosition, setFocusPosition] = useState<[number, number, number] | null>(null)
   const [isFocusing, setIsFocusing] = useState(false)
+  const [isDetailOpen, setIsDetailOpen] = useState(false)
   const [simTime, setSimTime] = useState(0)
+  // Identifiant du jour simulé (UTC) : les requêtes JPL sont throttlées à la
+  // granularité jour pour éviter tout fetch réseau dans la boucle de rendu.
+  const jplDayId = simulationTimeToDayId(simTime)
   const [jplEarthPosition, setJplEarthPosition] = useState<[number, number, number] | null>(null)
   const [jplMoonPosition, setJplMoonPosition] = useState<[number, number, number] | null>(null)
   const [jplMercuryPosition, setJplMercuryPosition] = useState<[number, number, number] | null>(null)
@@ -1626,6 +1786,11 @@ function ExplorerSection() {
   const [jplUranusPosition, setJplUranusPosition] = useState<[number, number, number] | null>(null)
   const [jplNeptunePosition, setJplNeptunePosition] = useState<[number, number, number] | null>(null)
   const controlsRef = useRef<any>(null)
+
+  const handleSelectPlanet = useCallback((p: Planet) => {
+    setIsDetailOpen(false)
+    setSelectedPlanet(p)
+  }, [])
 
   const handleFocus = useCallback(() => {
     if (!selectedPlanet) return
@@ -1681,7 +1846,7 @@ function ExplorerSection() {
     }
   }, [selectedPlanet])
 
-  // Fetch JPL Earth position when simulation time changes
+  // Fetch JPL Earth position when simulated DATE changes (throttled to 1 fetch per day)
   useEffect(() => {
     ;(async () => {
       try {
@@ -1699,9 +1864,9 @@ function ExplorerSection() {
         setJplEarthPosition(null)
       }
     })()
-  }, [simTime])
+  }, [jplDayId])
 
-  // Fetch JPL Moon position when simulation time changes
+  // Fetch JPL Moon position when simulated DATE changes (throttled to 1 fetch per day)
   useEffect(() => {
     ;(async () => {
       try {
@@ -1717,9 +1882,9 @@ function ExplorerSection() {
         setJplMoonPosition(null)
       }
     })()
-  }, [simTime])
+  }, [jplDayId])
 
-  // Fetch JPL positions for all planets when simulation time changes
+  // Fetch JPL positions for all planets when simulated DATE changes (throttled to 1 fetch per day)
   useEffect(() => {
     ;(async () => {
       const provider = new JPLProvider()
@@ -1760,7 +1925,54 @@ function ExplorerSection() {
         setJplNeptunePosition([results[7].position[0] * 55, results[7].position[1] * 55, results[7].position[2] * 55])
       }
     })()
-  }, [simTime])
+  }, [jplDayId])
+
+  const planetPositions = useMemo((): Record<string, [number, number, number]> => {
+    const positions: Record<string, [number, number, number]> = { sun: [0, 0, 0] }
+    const jplPositionsMap: Record<string, [number, number, number] | null | undefined> = {
+      earth: jplEarthPosition,
+      mercury: jplMercuryPosition,
+      venus: jplVenusPosition,
+      mars: jplMarsPosition,
+      jupiter: jplJupiterPosition,
+      saturn: jplSaturnPosition,
+      uranus: jplUranusPosition,
+      neptune: jplNeptunePosition,
+    }
+    for (const planet of PLANETS) {
+      if (planet.id === 'sun' || planet.id === 'moon') continue
+      const jplPos = jplPositionsMap[planet.id]
+      positions[planet.id] = jplPos
+        ? mapOrbitalPositionToVisual(jplPos)
+        : getPlanetPosition(planet, simTime)
+    }
+    const earthPos = positions.earth
+    const moonOffset = jplMoonPosition
+      ? mapOrbitalPositionToVisual(jplMoonPosition, true)
+      : getMoonOffset(simTime)
+    positions.moon = [
+      earthPos[0] + moonOffset[0],
+      earthPos[1] + moonOffset[1],
+      earthPos[2] + moonOffset[2],
+    ]
+    return positions
+  }, [simTime, jplEarthPosition, jplMercuryPosition, jplVenusPosition, jplMarsPosition, jplJupiterPosition, jplSaturnPosition, jplUranusPosition, jplNeptunePosition, jplMoonPosition])
+
+  const sunDirection = useMemo(() => {
+    const earthPos = planetPositions.earth
+    return new THREE.Vector3(-earthPos[0], -earthPos[1], -earthPos[2]).normalize()
+  }, [planetPositions])
+
+  const subsolarPoint = useMemo(() => {
+    return calculateSubsolarPoint(simTime, planetPositions.earth)
+  }, [simTime, planetPositions])
+
+  const dayNightConfig = useMemo(() => ({
+    hasDaylight: true,
+    daylightDirection: sunDirection,
+    ambientIntensity: 0.02,
+    directIntensity: 2.8,
+  }), [sunDirection])
 
   return (
     <section id="explorer" className="relative h-screen overflow-hidden">
@@ -1773,7 +1985,7 @@ function ExplorerSection() {
         >
           <SolarSystemScene
             selectedPlanet={selectedPlanet}
-            onSelectPlanet={setSelectedPlanet}
+            onSelectPlanet={handleSelectPlanet}
             isPlaying={isPlaying}
             timeSpeed={timeSpeed}
             focusTarget={focusTarget}
@@ -1829,6 +2041,23 @@ function ExplorerSection() {
             planet={selectedPlanet}
             onClose={() => setSelectedPlanet(null)}
             onFocus={handleFocus}
+            simTime={simTime}
+            jplPositions={{
+              earth: jplEarthPosition,
+              mercury: jplMercuryPosition,
+              venus: jplVenusPosition,
+              mars: jplMarsPosition,
+              jupiter: jplJupiterPosition,
+              saturn: jplSaturnPosition,
+              uranus: jplUranusPosition,
+              neptune: jplNeptunePosition,
+              moon: jplMoonPosition,
+            }}
+            planetPositions={planetPositions}
+            sunDirection={sunDirection}
+            subsolarPoint={selectedPlanet?.id === 'earth' ? subsolarPoint : null}
+            isDetailOpen={isDetailOpen}
+            onDetailToggle={() => setIsDetailOpen(prev => !prev)}
           />
           <div className="hidden sm:block">
             <CoordinateDisplay selectedPlanet={selectedPlanet} time={simTime} />
@@ -1836,7 +2065,7 @@ function ExplorerSection() {
         </div>
 
         <div className="absolute top-1/2 -translate-y-1/2 right-4 pointer-events-auto hidden lg:block">
-          <PlanetSelector selected={selectedPlanet} onSelect={setSelectedPlanet} />
+          <PlanetSelector selected={selectedPlanet} onSelect={handleSelectPlanet} />
         </div>
 
         <div className="absolute bottom-10 left-1/2 -translate-x-1/2 pointer-events-auto">
@@ -1845,6 +2074,7 @@ function ExplorerSection() {
             onToggle={() => setIsPlaying(p => !p)}
             speed={timeSpeed}
             onSpeedChange={setTimeSpeed}
+            simTime={simTime}
           />
         </div>
 
@@ -1858,7 +2088,7 @@ function ExplorerSection() {
                 <button
                   key={p.id}
                   className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-white/5 transition-all"
-                  onClick={() => setSelectedPlanet(p)}
+                  onClick={() => handleSelectPlanet(p)}
                 >
                   <div className="rounded-full w-2 h-2 flex-shrink-0" style={{ background: p.color }} />
                   <span className="text-[10px] font-mono text-stellar-dim">{p.name}</span>

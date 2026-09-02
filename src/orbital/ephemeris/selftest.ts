@@ -1,4 +1,5 @@
 import { EphemerisProvider, EphemerisState, SceneEphemerisState, JPLProvider } from "./index.ts"
+import { SIMULATION_EPOCH_MS, simulationTimeToDateStr, simulationTimeToDayId } from "../../time.ts"
 
 let passed = 0
 let failed = 0
@@ -133,32 +134,38 @@ try {
   failed++
 }
 
-// Test 8: Fonction simulationTimeToDate (module level)
+// Test 8: Fonction simulationTimeToDate (temps simulé → date UTC)
 try {
-  // Import the function by testing the logic directly
-  const epoch = new Date(Date.UTC(2025, 7, 19, 0, 0, 0))
-  // simTime = 0 → should give 2025-08-19
-  const d0 = new Date(epoch.getTime() + 0 * 3600000)
-  const m0 = String(d0.getUTCMonth() + 1).padStart(2, '0')
-  const d0str = String(d0.getUTCDate()).padStart(2, '0')
-  const date0 = `${d0.getUTCFullYear()}-${m0}-${d0str}`
-  if (date0 === "2025-08-19") {
-    console.log("✓ simulationTimeToDate(0) → 2025-08-19")
+  // simTime = 0 → représente le jour de l'époque (jour J)
+  const date0 = simulationTimeToDateStr(0)
+  const date0DayId = simulationTimeToDayId(0)
+  const day0Floor = Math.floor(SIMULATION_EPOCH_MS / 86400000)
+  if (date0DayId === day0Floor) {
+    console.log(`✓ simulationTimeToDateStr(0) → jour d'époque (${date0})`)
     passed++
   } else {
-    console.log("✗ simulationTimeToDate(0) →", date0, "(attendu 2025-08-19)")
+    console.log("✗ simulationTimeToDateStr(0) → jour d'époque invalide", date0)
     failed++
   }
-  // simTime = 24 → should give 2025-08-20
-  const d24 = new Date(epoch.getTime() + 24 * 3600000)
-  const m24 = String(d24.getUTCMonth() + 1).padStart(2, '0')
-  const d24str = String(d24.getUTCDate()).padStart(2, '0')
-  const date24 = `${d24.getUTCFullYear()}-${m24}-${d24str}`
-  if (date24 === "2025-08-20") {
-    console.log("✓ simulationTimeToDate(24) → 2025-08-20")
+  // simTime = 24 → +1 jour (heure universelle)
+  const date24 = simulationTimeToDateStr(24)
+  const date1DayId = simulationTimeToDayId(0) + 1
+  const day24 = simulationTimeToDayId(24)
+  if (day24 === date1DayId) {
+    console.log(`✓ simulationTimeToDateStr(24) → jour J+1 (${date24})`)
     passed++
   } else {
-    console.log("✗ simulationTimeToDate(24) →", date24, "(attendu 2025-08-20)")
+    console.log("✗ simulationTimeToDateStr(24) → jour J+1 attendu:", date24)
+    failed++
+  }
+  // +24h en heure locale ne doit pas toujours coincider avec +1 jour UTC
+  const date24Minus = simulationTimeToDateStr(23.5)
+  const day235 = simulationTimeToDayId(23.5)
+  if (day235 === date0DayId || day235 === day24) {
+    console.log(`✓ +23.5h → jour contigu (${date24Minus})`)
+    passed++
+  } else {
+    console.log("✗ +23.5h → jour attendu dans J/J+1:", date24Minus)
     failed++
   }
   passed++

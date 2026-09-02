@@ -1,4 +1,5 @@
 import type { EphemerisState, SceneEphemerisState } from "./types.ts"
+import { simulationTimeToDateStr } from "../../time.ts"
 
 const JPL_BASE_URL = 'https://ssd-api.jpl.nasa.gov/api/horizons.api'
 
@@ -20,21 +21,6 @@ const JPL_BODY_IDS: Record<string, string> = {
 
 function jplIdForBody(bodyId: string): string | undefined {
   return JPL_BODY_IDS[bodyId]
-}
-
-/**
- * Convertit le temps simulé (unités heures) en date JPL.
- * L'époque (simTime = 0) correspond au 19 août 2025,
- * tel que affiché dans l'interface TimeControlBar.
- */
-function simulationTimeToDate(simulationTime: number): string {
-  // Époque de référence : 19 août 2025 00:00:00 UTC
-  const epoch = new Date(Date.UTC(2025, 7, 19, 0, 0, 0))
-  const date = new Date(epoch.getTime() + simulationTime * 3600000)
-  const y = date.getUTCFullYear()
-  const m = String(date.getUTCMonth() + 1).padStart(2, '0')
-  const d = String(date.getUTCDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
 }
 
 /**
@@ -143,7 +129,7 @@ export class JPLProvider {
     }
 
 try {
-      const date = simulationTimeToDate(simulationTime)
+      const date = simulationTimeToDateStr(simulationTime)
 
       const params = new URLSearchParams({
         id: jplBodyId,

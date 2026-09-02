@@ -414,3 +414,82 @@
   la texture réelle est bien chargée et appliquée au mesh unique de la Lune (rendu inline dans
   le composant Terre). Aucun doublon, aucune couche résiduelle. La texture est visible.
 - **Statut** : active (V1.3.4) — validation par lecture de code, aucune modification requise.
+
+## D54 — Temps astronomique réel pour jour/nuit (V1.4.0)
+
+- **Décision** : créer `src/rendering/astronomicalTime.ts` avec conversion simTime ↔ UTC, date julienne, GMST, position Soleil (longitude écliptique, déclinaison, ascension droite), point subsolaire, angle initial rotation Terre. `createSunLight()` dans `lighting.ts` utilise maintenant la position Terre réelle pour calculer la direction Soleil→Terre. `getRotationAngle()` reçoit un `initialAngle` calculé à l'époque pour aligner la rotation visuelle sur le point subsolaire réel.
+- **Raison** : Le jour/nuit doit être déterminé par la position astronomique réelle du Soleil, pas par une direction fixe. La frontière jour/nuit doit se déplacer avec le temps simulé. La rotation Terre doit être cohérente avec l'époque (2025-08-19 00:00 UTC). Réutilise le `simTime` existant et les données JPL — aucun nouveau système temporel.
+- **Statut** : active (V1.4.0).
+
+## D55 — Panneau "Plus d'informations" enrichi (V1.4.0)
+
+- **Décision** : étendre `ObjectInfoPanel` avec toggle "More Info" affichant : diamètre, périodes, excentricité, inclinaison, position, vitesse orbitale, date/heure UTC simulée, statut JPL. Pour la Terre : point subsolaire (lat/lon), direction Soleil, heure simulée. TimeControlBar affiche la date/heure UTC simulée en temps réel.
+- **Raison** : L'utilisateur doit avoir accès aux données astronomiques réelles quand disponibles. Pas de fausses valeurs — données manquantes indiquées clairement. Distinction claire : temps simulation vs date astronomique vs vitesse.
+- **Statut** : active (V1.4.0).
+
+## D56 — Performance : calculs astronomiques via useMemo (V1.4.0)
+
+- **Décision** : calculs de `planetPositions`, `sunDirection`, `subsolarPoint`, `dayNightConfig` dans `ExplorerSection` via `useMemo` (dépendances : `simTime`, positions JPL). Partagés avec `SolarSystemScene` et `ObjectInfoPanel` via props. Aucun calcul dans `useFrame`, aucun fetch réseau.
+- **Raison** : Éviter les calculs redondants et les allocations dans la boucle de rendu. Les calculs astronomiques sont déterministes et ne changent que quand le temps simulé ou les données JPL changent.
+- **Statut** : active (V1.4.0).
+
+## D57 — Rotation déterministe pilotée par `simulationTime`, lue à la frame près (V1.4.1)
+
+- **Décision** : la rotation d'un corps suit strictement
+  `angle = initialAngle + (simulationTime / rotationPeriod) × 2π`, avec `simulationTime` en
+  heures simulées et `rotationPeriod` en heures (valeurs astronomiques réelles, négatives pour
+  les rotations rétrogrades). Aucune intégration cumulative (`rotation += speed × delta`).
+  Le temps simulé est la source de vérité : pause → immobile, 5x/10x → accélération temporelle
+  uniquement, passé/futur → recalcul exact. Correction : `Sun`, `Planet` et la Lune lisent le
+  ref vivant `timeRef.current` dans `useFrame` (au lieu de la prop `time` figée au dernier
+  rendu React, qui causait des micro-saccades tous les ~6 frames).
+- **Raison** : garantit la cohérence temps → orientation (aucune dérive, aucune désynchronisation
+  après pause ou changement de vitesse) et une rotation visuellement lisse. Les périodes de
+  rotation ne sont jamais modifiées artificiellement pour un effet visuel.
+- **Statut** : active (V1.4.1).
+
+## D58 — Bouton « More Info » : état réel dans ExplorerSection (V1.4.1)
+
+- **Décision** : l'état `isDetailOpen` est porté par `ExplorerSection` et câblé au toggle du
+  panneau `ObjectInfoPanel` ; il est réinitialisé à chaque changement de corps sélectionné via
+  `handleSelectPlanet` (désormais utilisé par la scène 3D, le `PlanetSelector`, le sélecteur
+  mobile et le bouton de fermeture).
+- **Raison** : le panneau détaillé était inaccessible (`isDetailOpen={false}` et
+  `onDetailToggle={() => {}}` codés en dur). Aucun second panneau créé — le système existant
+  est simplement activé ; il affiche les informations du corps sélectionné.
+- **Statut** : active (V1.4.1).
+
+## D59 — Lune : texture réelle LROC WAC confirmée, aucun doublon à supprimer (V1.4.1)
+
+- **Décision** : conserver l'unique mesh visible de la Lune (sphère 16×16 dans le composant
+  `Planet`, branche Terre) et le chemin texture existant : `modelRegistry.ts`
+  (`/textures/moon.jpg`, LROC WAC 2048×1024) → `modelLoader.ts` (`SRGBColorSpace`,
+  `ClampToEdgeWrapping`, mipmaps, cache) → `useAstroModel("moon")` → `map` du
+  `meshStandardMaterial` avec `color="#ffffff"`. Ne rien peindre ni remplacer si l'asset
+  correspond déjà. La rotation s'applique au groupe parent — les UV équirectangulaires ne sont
+  pas altérés, la texture reste indépendante de la rotation et de l'éclairage.
+- **Raison** : l'audit confirme qu'aucun ancien mesh/couche colorée ne concurrence la texture ;
+  modifier quoi que ce soit introduirait une régression inutile. La texture reste facilement
+  remplaçable en échangeant `public/textures/moon.jpg`.
+- **Statut** : active (V1.4.1).
+
+## D60 — Modèle temporel : avancement en heures avec division par 3600 (V1.5.0)
+
+- **Décision** : conserver `simulationTime` en heures (toutes les formules restent en heures) et
+  corriger l'avancement : `timeRef.current += (delta_réel_s × speed) / 3600`. L'epoch (simTime=0)
+  est capturée une seule fois au chargement (`Date.now()`) dans `src/time.ts` et partagée par
+  `astronomicalTime.ts` et `jplProvider.ts`. Les `useEffect` JPL dépendent de `[jplDayId]`
+  (jour UTC simulé) au lieu de `[simTime]` pour throttler à un fetch par jour simulé.
+- **Raison** : l'ancien avancement `delta × speed` (sans `/3600`) couplé à la conversion
+  `simTime × 3600000` ms produisait un avancement 3600× trop rapide. Le correctif `/3600`
+  préserve l'unité horaire dans toutes les formules (rotation, orbital, JPL) tout en
+  obtenant le temps réel à ×1. L'epoch dynamique permet l'affichage de l'heure locale réelle.
+- **Statut** : active (V1.5.0).
+
+## D61 — Affichage local + UTC séparés (V1.5.0)
+
+- **Décision** : TimeControlBar affiche l'heure locale (fuseau navigateur) comme horloge
+  principale et l'UTC en secondaire. ObjectInfoPanel affiche les deux séparément.
+- **Raison** : l'utilisateur doit pouvoir lire l'heure correspondant à son fuseau horaire.
+  L'UTC reste disponible comme référence astronomique.
+- **Statut** : active (V1.5.0).

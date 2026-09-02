@@ -402,3 +402,103 @@
 - **Non-régression** : tous systèmes LOCKED préservés.
 
 - **Tests** : selftest orbital 7/7, selftest ephemeris 27/27, `tsc --noEmit` 0 erreur, `npm run build` OK.
+
+
+## V1.4.0 — Temps astronomique réel + Jour/Nuit réaliste + Plus d'informations
+
+- **Temps astronomique** (`src/rendering/astronomicalTime.ts`) :
+  - Conversion simTime → UTC, date julienne, GMST, longitude écliptique Soleil, déclinaison/ascension droite, point subsolaire.
+  - Époque 2025-08-19 00:00 UTC. Réutilise `simTime` existant (0.1x/1x/5x/10x, pause, passé/futur).
+
+- **Jour/Nuit réaliste** (`src/rendering/lighting.ts`) :
+  - `createSunLight()` calcule direction Soleil→Terre depuis position réelle Terre (`planetPositions.earth`).
+  - Frontière jour/nuit se déplace progressivement avec le temps simulé.
+  - Terminateur cohérent avec rotation Terre + position astronomique Soleil.
+
+- **Rotation terrestre cohérente** :
+  - `calculateInitialEarthRotationAngle()` : angle initial à l'époque basé sur position Terre-Soleil + GMST.
+  - `getRotationAngle(simTime, 23.934, initialAngle)` — rotation pilotée par temps simulé.
+
+- **Plus d'informations** (`ObjectInfoPanel`) :
+  - Données : nom, type, diamètre, distance, périodes, excentricité, inclinaison, position, vitesse, date/heure, statut JPL.
+  - Terre : point subsolaire (lat/lon), heure simulée, jour/nuit réel.
+  - Toggle "More Info"/"Less Info".
+
+- **TimeControlBar** : affiche date/heure UTC simulée (ex: "2025-08-19 15:26:00 UTC").
+
+- **Cohérence JPL** : réutilise provider/cache existant, pas de fetch dans useFrame, fallback orbital.
+
+- **Performance** : `useMemo` pour calculs astronomiques, pas de calculs lourds dans useFrame.
+
+- **Non-régression** : tous systèmes LOCKED préservés.
+
+- **Tests** : selftest orbital 7/7, selftest ephemeris 27/27, `tsc --noEmit` 0 erreur, `npm run build` OK.
+
+## V1.4.1 — Stabilisation avant le style (rotation, jour/nuit, « Voir plus », Lune)
+
+- **Rotation astronomique** — audit de `src/rendering/rotation.ts` : formule déterministe
+  `angle = initialAngle + (simulationTime / rotationPeriod) × 2π` confirmée (unités : heures simulées,
+  aucune rotation cumulative). Défaut réel corrigé : `Sun`, `Planet` et la Lune passent la prop
+  figée `time` (rendu tous les 6 frames) → ref vivant `timeRef` lu dans `useFrame` →
+  rotation lisse frame par frame, toujours dérivée de `simulationTime`. Pause immobile,
+  passé/futur recalculés, 5x/10x = accélération du temps simulé uniquement.
+- **Jour/nuit** — validé : `PointLight` au Soleil (2,8, decay 0) + normales du globe + `ambient` 0,02.
+  Aucune zone jour/nuit peinte sur texture. Angle initial Terre aligné sur le point subsolaire
+  astronomique (GMST/RA/decl) à l'époque, puis rotation à 2π par jour sidéral → la partie éclairée
+  correspond à la position réelle du Soleil à l'heure simulée ; terminator bouge avec le temps.
+  Fonctionne avec JPL et avec le fallback orbital.
+- **Bouton « More Info » (Voir plus) 🔧** — cause : `isDetailOpen={false}` et `onDetailToggle={() => {}}`
+  codés en dur dans `ExplorerSection` ; aucun état de détail n'existait. Correction : nouvel état
+  `isDetailOpen`, toggle câblé, réinitialisation à chaque nouveau corps sélectionné
+  (`handleSelectPlanet`). Le panneau affiche les données réelles du corps sélectionné.
+- **Lune — texture réelle** — validé : `/textures/moon.jpg` (LROC WAC 2048×1024) chargée via
+  `modelRegistry` → `modelLoader` (sRGB, ClampToEdge) → `useAstroModel("moon")` → `map` du
+  `meshStandardMaterial` du mesh unique visible (sphère 16×16). Pas de doublon de mesh,
+  pas d'ancienne sphère colorée. UV équirectangulaires standards, rotation sur groupe parent
+  (ne touche pas aux UV).
+- **Nouveau selftest** `src/rendering/rotationSelftest.ts` (15 tests, exécutable via
+  `npx jiti src/rendering/rotationSelftest.ts`) : déterminisme, Terre, périodicité, pause,
+  changement de vitesse, passé, angle initial, corps sans période, Vénus rétrograde,
+  Mars, Jupiter, Saturne, Lune, Soleil.
+- **Non-régression** : orbital V0.9.4, JPL V1.0.x, rendering V1.1.x, textures, éclairage jour/nuit,
+  Soleil, Saturne + anneaux, trajectoires, étoiles, CameraController, OrbitControls, Focus Camera,
+  zoom, damping, TimeControlBar, sélection, responsive — tous préservés.
+- **Tests** : selftest orbital 7/7, selftest ephemeris 27/27, rotationSelftest 15/15,
+  `tsc --noEmit` 0 erreur, `npm run build` OK.
+
+## V1.5.0 — Temps réel, horloge locale, epoch dynamique
+
+- **Cause racine identifiée et corrigée** — l'avancement temporel `timeRef += delta × speed` (delta en secondes)
+  couplé à `simulationTimeToUTC(simTime)` interprétant simTime en heures (×3600 ms) produisait un
+  avancement 3600× trop rapide : à ×1, 1 seconde réelle = 1 heure simulée (la Terre tournait en ~24 s réelles).
+  Correction : `timeRef += (delta × speed) / 3600` → à ×1, 1 seconde réelle = 1 seconde simulée.
+- **Epoch dynamique (single source of truth)** — nouveau module `src/time.ts` capturant `Date.now()` une seule
+  fois au chargement. L'ancien epoch fixe `2025-08-19` (astronomicalTime + jplProvider) est remplacé
+  par cette epoch dynamique, importée par les deux couches. L'horloge simulée affiche l'heure locale réelle
+  de l'utilisateur à ×1. Aucune conversion heure↔seconde dans les formules (simulationTime en heures,
+  rotationPeriod en heures, orbitalPeriod en heures visuelles).
+- **Affichage local** — TimeControlBar affiche désormais l'heure locale (fuseau navigateur) comme horloge
+  principale, l'UTC en secondaire. ObjectInfoPanel affiche les deux. L'heure locale est dérivée de
+  `toLocaleString()` sur le Date UTC simulé.
+- **Throttling JPL** — les trois `useEffect` de fetch JPL (Terre, Lune, toutes planètes) utilisent
+  désormais `[jplDayId]` (identifiant du jour UTC simulé via `simulationTimeToDayId`) au lieu de `[simTime]`.
+  À ×1, un seul fetch JPL par jour simulé (≈ un fetch par jour réel). Pas de fetch réseau dans la
+  boucle de rendu. Préserve les règles : `pas de calculs réseau dans useFrame`.
+- **Rotation lisse** — le correctif V1.4.1 (utilisation de `timeRef` vivant au lieu de `time` figé)
+  est préservé. La rotation est déterministe, sans dérive cumulative, recalculée à chaque frame.
+  Le bon avancement temporel (÷3600) assure que la rotation est physiquement cohérente à ×1.
+- **Jour/nuit** — la chaîne subsolaire `simTime → UTC → RA/GMST → subsolar lon → initialAngle`
+  fonctionne correctement avec l'epoch dynamique. L'angle initial est calculé via `calculateInitialEarthRotationAngle`
+  à simTime=0 (epoch = instant de démarrage), alignant le point subsolaire vers le Soleil. La rotation
+  affiche ensuite le cycle jour/nuit correspondant à l'heure simulée. Validation : erreur d'alignement
+  ≤ 2° à t=0 (test de vérification géométrique).
+- **Tests enrichis** — rotationSelftest étendu de 15 à 21 tests : ajout de 4 tests ×5/×0.1/×1/×10
+  vérifiant la rotation proportionnelle au facteur de vitesse, 1 test pause, 1 test epoch.
+  selftest ephemeris adapté de 27 à 28 tests : `simulationTimeToDateStr` testé via `simulationTimeToDayId`
+  (plus de date fixe `2025-08-19`, désormais jour d'époque dynamique). Les dates relatives (+24h = J+1,
+  +23.5h = jour contigu) sont vérifiées.
+- **Non-régression** : orbital V0.9.4, JPL V1.0.x, rendering V1.1.x, textures, éclairage jour/nuit,
+  Soleil, Saturne + anneaux, trajectoires, étoiles, CameraController, OrbitControls, Focus Camera,
+  zoom, damping, TimeControlBar, sélection, responsive — tous préservés.
+- **Tests** : selftest orbital 7/7, selftest ephemeris 28/28, rotationSelftest 21/21,
+  `tsc --noEmit` 0 erreur, `npm run build` OK.

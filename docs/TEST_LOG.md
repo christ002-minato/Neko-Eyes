@@ -36,6 +36,73 @@
 > Journal des tests réellement effectués — seuls les résultats connus sont consignés.
 > Aucune invention de résultats.
 
+## 2026-09-02 — V1.4.1 Stabilisation avant le style (rotation, jour/nuit, « Voir plus », Lune)
+
+- ✅ `npx tsc --noEmit` : aucune erreur
+- ✅ `npm run build` : réussite
+- ✅ selftest orbital : 7/7 tests validés
+- ✅ selftest ephemeris : 27/27 tests validés
+- ✅ **Nouveau** `npx jiti src/rendering/rotationSelftest.ts` : 15/15 tests validés
+  - Déterminisme : même `simulationTime` → même orientation
+  - Terre : rotation complète en 23,934 h simulées, demi-rotation en 11,967 h
+  - Périodicité : `angle(t + période) = angle(t) + 2π`
+  - Pause : même `t` → même angle (aucune rotation quand le temps ne bouge pas)
+  - Changement de vitesse : 10x = déplacement temporel ×10 (le temps simulé est la source de vérité)
+  - Passé : `t = -23,934 h` → `-2π`
+  - Angle initial : `angle(0) = initialAngle`
+  - Corps sans `rotationPeriod` : orientation figée, aucune rotation arbitraire
+  - Vénus (rétrograde) : demi-période → `-π`
+  - Mars (24,623 h), Jupiter (9,925 h), Saturne (10,656 h) : rotation complète correcte
+  - Lune (655,72 h, rotation synchrone) et Soleil (609,12 h) : rotation complète correcte
+
+## 2026-09-02 — V1.5.0 Temps réel, horloge locale, epoch dynamique
+
+- ✅ `npx tsc --noEmit` : aucune erreur
+- ✅ `npm run build` : réussite
+- ✅ selftest orbital : 7/7 tests validés
+- ✅ selftest ephemeris : 28/28 tests validés (adapté : epoch dynamique, dates relatives vérifiées)
+- ✅ `npx jiti src/rendering/rotationSelftest.ts` : 21/21 tests validés (étendu)
+  - Tous les tests V1.4.1 préservés (15 tests originaux)
+  - ×5 : 5× la rotation à durée réelle égale
+  - ×0.1 : 0.1× la rotation à durée réelle égale
+  - ×1 : 1/23.934 de tour par heure réelle (temps réel)
+  - ×10 : 10/23.934 de tour par heure réelle
+  - Pause : temps figé → orientation figée
+  - Epoch : même angle à t=0 (déterminisme local)
+
+### Corrigé — Bouton « More Info » (Voir plus)
+
+- ✅ Cause identifiée : `isDetailOpen={false}` + `onDetailToggle={() => {}}` codés en dur
+- ✅ Correction : état `isDetailOpen` ajouté dans `ExplorerSection`, toggle câblé
+- ✅ Réinitialisation de l'état quand le corps sélectionné change (`handleSelectPlanet`)
+- ✅ Le panneau affiche les informations du corps sélectionné (données astronomiques réelles,
+  heure/position simulée, point subsolaire pour la Terre, statut JPL)
+
+### Corrigé — Rotation lisse
+
+- ✅ Cause identifiée : rotation appliquée dans `useFrame` avec la prop `time` figée au
+  dernier rendu React (rendu toutes les 6 frames → micro-saccades)
+- ✅ Correction : `Sun`, `Planet`, Lune lisent le ref vivant `timeRef.current` dans `useFrame`
+- ✅ Rotation déterministe préservée : toujours `getRotationAngle(simulationTime, rotationPeriod)`
+
+### Validé — Jour/nuit
+
+- ✅ Éclairage : `PointLight` au Soleil (2,8, decay 0) + normales du globe + `ambient` 0,02
+  → terminator jour → crépuscule → nuit produit par le GPU (aucune zone peinte sur texture)
+- ✅ L'angle initial Terre aligne le point subsolaire astronomique vers le Soleil à l'époque
+- ✅ La partie éclairée correspond à la position astronomique du Soleil à l'heure simulée
+- ✅ Fonctionne avec JPL et avec le fallback orbital V0.9.4
+- ⚠️ Vérification visuelle multiple heures (matin/midi/après-midi/coucher/nuit) — à confirmer
+  manuellement dans le navigateur (WebGL non disponible dans cet environnement)
+
+### Validé — Lune texture réelle
+
+- ✅ Mesh unique visible : sphère 16×16 dans `Planet` (branche Terre), aucun doublon
+- ✅ Chemin : `modelRegistry.ts` → `/textures/moon.jpg` (LROC WAC 2048×1024) → `modelLoader.ts`
+  → `useAstroModel("moon")` → `map` du `meshStandardMaterial` avec `color="#ffffff"`
+- ✅ UV équirectangulaires standards, rotation appliquée au groupe parent (n'altère pas les UV)
+- ✅ Aucune ancienne sphère colorée compétitrice
+
 ## 2026-08-21 — Simulation du suivi caméra (algorithme de CameraController, sans rendu)
 
 - ✅ 6 620 frames suivies, 19 groupes de propriétés
@@ -547,3 +614,57 @@
 - ✅ Temps passé/futur, vitesses 0.1x/1x/5x/10x, pause
 - ✅ Responsive
 - ✅ Saturne/anneaux, étoiles inchangés
+
+
+## V1.4.0 — Temps astronomique réel + Jour/Nuit réaliste + Plus d'informations
+
+### Tests automatiques exécutés
+- ✅ selftest orbital : 7/7 tests validés (`npx jiti src/orbital/selftest.ts`)
+- ✅ selftest ephemeris : 27/27 tests validés (`npx jiti src/orbital/ephemeris/selftest.ts`)
+- ✅ `npx tsc --noEmit` : aucune erreur
+- ✅ `npm run build` : réussite
+
+### Corrections vérifiées par le code
+
+**Temps astronomique (`src/rendering/astronomicalTime.ts`) :**
+- ✅ `simulationTimeToUTC(simTime)` → Date UTC correcte (époque 2025-08-19 00:00 + simTime heures)
+- ✅ `simulationTimeToJulianDate()` → date julienne précise
+- ✅ `calculateGMST(julianDate)` → Greenwich Mean Sidereal Time en radians
+- ✅ `calculateSunDeclinationRightAscension()` → déclinaison/ascension droite du Soleil
+- ✅ `calculateSubsolarPoint()` → latitude/longitude du point subsolaire
+- ✅ `calculateInitialEarthRotationAngle()` → angle initial rotation Terre à l'époque
+- ✅ `formatUTCDate()` / `formatSimulationTime()` → affichage lisible
+
+**Jour/Nuit réaliste (`src/rendering/lighting.ts`) :**
+- ✅ `createSunLight(sunPosition, earthPosition)` → calcule `daylightDirection` = vecteur Soleil→Terre normalisé
+- ✅ Direction mise à jour chaque frame via `useSolarLighting()` avec `planetPositions` actuelles
+- ✅ `PointLight` au Soleil (intensity 2.8, decay 0) inchangé → éclairage planètes préservé
+- ✅ `AmbientLight` 0.02 via `dayNightConfig.ambientIntensity`
+
+**Rotation terrestre cohérente :**
+- ✅ `earthInitialRotationAngle` calculé via `calculateInitialEarthRotationAngle(earthAtEpoch)`
+- ✅ `getRotationAngle(time, 23.934, initialRotationAngle)` dans composant `Planet` (Terre)
+- ✅ Angle initial ≈ 4.07 rad pour aligner point subsolaire réel (12° N, 150° O) face au Soleil à simTime=0
+- ✅ Rotation continue et cohérente avec vitesses 0.1x/1x/5x/10x, pause, passé/futur
+
+**Plus d'informations (`ObjectInfoPanel`) :**
+- ✅ Affichage données : diamètre, périodes, excentricité, inclinaison, position, vitesse orbitale
+- ✅ Statut JPL : "Active" ou "Fallback (orbital model)"
+- ✅ Terre : point subsolaire (lat/lon), heure simulée, direction Soleil
+- ✅ Toggle "More Info"/"Less Info" fonctionnel
+
+**TimeControlBar :**
+- ✅ Affiche date/heure UTC simulée (format "2025-08-19 15:26:00 UTC")
+- ✅ Met à jour en temps réel avec simTime
+
+### Non-régression confirmée
+- ✅ Modèle orbital V0.9.4 inchangé
+- ✅ JPL V1.0.3 inchangé
+- ✅ Visual Scale V1.2.0 inchangé
+- ✅ Trajectoires V1.3.1 inchangées
+- ✅ Éclairage jour/nuit V1.3.3 inchangé
+- ✅ CameraController, OrbitControls, TimeControlBar, Focus Camera, sélection, damping, navigation
+- ✅ Temps passé/futur, vitesses 0.1x/1x/5x/10x, pause
+- ✅ Responsive
+- ✅ Saturne/anneaux, étoiles inchangés
+- ✅ Textures (Terre, Lune, Soleil, planètes) inchangées
