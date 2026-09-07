@@ -18,3 +18,5 @@ logs/
 # beside it.
 /.plugins/
 /.opencode-skills/
+# Données GeoJSON sources volumineuses
+data/source/*.geojson
