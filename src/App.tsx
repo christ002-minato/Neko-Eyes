@@ -5,7 +5,7 @@ import * as THREE from 'three'
 import nekoLogo from '@/imports/neko_eyer_logo.png'
 import { JPLProvider } from '@/orbital/ephemeris'
 import { defineOrbitalSystem, getBodyPosition } from '@/orbital'
-import { useSolarLighting, mapOrbitalDistanceToVisual, mapBodySizeToVisual, mapOrbitalPositionToVisual, getMaterialConfig, getRotationAngle, createPlanetMesh, createSunMesh, getTrajectoryConfig, createOrbitTrajectory, disposeOrbitTrajectory, type BodyType, getPlanetMaterialConfig, calculateInitialEarthRotationAngle, getBodyOrbitalElements, simulationTimeToUTC, calculateSubsolarPoint } from "@/rendering"
+import { useSolarLighting, mapOrbitalDistanceToVisual, mapBodySizeToVisual, mapOrbitalPositionToVisual, getMaterialConfig, getRotationAngle, createPlanetMesh, createSunMesh, getTrajectoryConfig, createOrbitTrajectory, disposeOrbitTrajectory, type BodyType, getPlanetMaterialConfig, calculateInitialEarthRotationAngle, getBodyOrbitalElements, simulationTimeToUTC, calculateSubsolarPoint, GeographicLayer, runGeoProjectionSelftest } from "@/rendering"
 import { useAstroModel } from "@/rendering/models"
 import { simulationTimeToDayId, formatLocalTime, formatUTCTime } from "@/time"
 
@@ -416,7 +416,7 @@ function Planet({
   moonIlluminated?: boolean
   initialRotationAngle?: number
 }) {
-  const meshRef = useRef<THREE.Mesh>(null)
+  const rotationGroupRef = useRef<THREE.Group>(null)
   const moonMeshRef = useRef<THREE.Mesh>(null)
   const isSelected = selectedId === planet.id
 
@@ -429,8 +429,8 @@ function Planet({
   }, [bodyType, illuminated])
 
   useFrame(() => {
-    if (meshRef.current) {
-      meshRef.current.rotation.y = getRotationAngle(timeRef.current, planet.rotationPeriod ?? 0, initialRotationAngle)
+    if (rotationGroupRef.current) {
+      rotationGroupRef.current.rotation.y = getRotationAngle(timeRef.current, planet.rotationPeriod ?? 0, initialRotationAngle)
     }
     if (moonMeshRef.current) {
       moonMeshRef.current.rotation.y = getRotationAngle(timeRef.current, moonData.rotationPeriod ?? 0)
@@ -478,10 +478,9 @@ function Planet({
 
   return (
     <group position={pos}>
-      <group ref={meshRef}>
+      <group ref={rotationGroupRef}>
         <primitive
           object={planetMesh}
-          ref={meshRef}
           onPointerDown={(e: { stopPropagation: () => void }) => {
             e.stopPropagation()
             onSelect(planet)
@@ -510,6 +509,8 @@ function Planet({
             />
           </mesh>
         )}
+        {/* Geographic boundaries (ADM0) inherit the group rotation */}
+        {planet.id === 'earth' && <GeographicLayer earthRadius={visualRadius} />}
       </group>
       {/* Saturn rings — anneaux 3D réalistes : bandes de transparence, éclairés par la scène */}
       {planet.id === 'saturn' && <SaturnRings radius={visualRadius} />}
@@ -2135,6 +2136,8 @@ function Footer() {
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
+  runGeoProjectionSelftest()
+
   return (
     <div className="min-h-screen bg-space-900">
       <Header />
