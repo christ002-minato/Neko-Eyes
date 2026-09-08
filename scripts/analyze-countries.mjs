@@ -1,6 +1,6 @@
 import fs from "node:fs";
 
-const file = "data/geoBoundariesCGAZ_ADM0.geojson";
+const file = "data/source/geoBoundariesCGAZ_ADM0.geojson";
 const targets = new Set(["CIV", "FRA", "USA", "BRA", "JPN"]);
 
 const results = new Map();

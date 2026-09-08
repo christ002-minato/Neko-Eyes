@@ -96,11 +96,12 @@ export function GeographicLayer({ earthRadius }: GeographicLayerProps) {
   return (
     <lineSegments geometry={geometry}>
       <lineBasicMaterial
-        color="#ffffff"
-        transparent
-        opacity={0.5}
-        depthWrite={false}
-      />
+  color="#ffffff"
+  transparent
+  opacity={0.8}
+  depthWrite={false}
+  depthTest={true}
+/>
     </lineSegments>
   )
 }

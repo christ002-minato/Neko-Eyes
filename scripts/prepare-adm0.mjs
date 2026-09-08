@@ -1,15 +1,7 @@
 import fs from "node:fs"
 
 const SOURCE = "data/source/geoBoundariesCGAZ_ADM0.geojson"
-const OUTPUT = "data/processed/countries-adm0-test.json"
-
-const TARGETS = new Set([
-  "CIV",
-  "FRA",
-  "BRA",
-  "USA",
-  "JPN",
-])
+const OUTPUT = "data/processed/countries-adm0-raw.json"
 
 console.log("========================================")
 console.log(" NEKO EYES — PRÉPARATION ADM0")
@@ -29,8 +21,7 @@ for (const feature of data.features) {
   const shapeType = properties.shapeType
   const geometry = feature.geometry
 
-  if (!TARGETS.has(code)) continue
-  if (shapeType !== "ADM0") continue
+  if (!shapeType || shapeType !== "ADM0") continue
   if (!geometry) continue
 
   countries.push({
