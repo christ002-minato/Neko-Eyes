@@ -20,4 +20,5 @@ logs/
 /.opencode-skills/
 # Données GeoJSON sources volumineuses
 data/source/*.geojson
-data/processed/*
+data/processed/*data/processed/countries-adm0-raw.json
+data/processed/countries-adm0-detail.json
