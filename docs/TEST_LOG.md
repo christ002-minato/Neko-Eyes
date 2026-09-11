@@ -36,6 +36,34 @@
 > Journal des tests réellement effectués — seuls les résultats connus sont consignés.
 > Aucune invention de résultats.
 
+## 2026-09-10 — Horloge globale et propagation JPL
+
+- ✅ Une seule horloge identifiée : `timeRef.current`, en heures simulées.
+- ✅ Mesure sur 1 seconde réelle : `0.1x = 0.0000277778 h`, `1x = 0.000277778 h`, `5x = 0.00138889 h`, `10x = 0.00277778 h`.
+- ✅ Les ratios de déplacement orbital théorique sont `0.1 / 1 / 5 / 10` pour Terre, Mars, Jupiter et Lune.
+- ✅ Aucun fetch JPL dans `useFrame`; les fetchs restent limités au changement de jour simulé.
+- ✅ `npx jiti src/orbital/selftest.ts` : 7/7.
+- ✅ `npx jiti src/rendering/rotationSelftest.ts` : 21/21.
+- ✅ `npx jiti src/orbital/ephemeris/selftest.ts` : 28/28.
+- ✅ `npx tsc --noEmit` : aucune erreur.
+- ✅ `npx vite build` : réussite.
+- ⏳ Test interactif WebGL complet : impossible dans l’environnement courant, contexte WebGL désactivé.
+
+## 2026-09-10 — Overlay frontières Earth
+
+- ✅ `npx tsc --noEmit` : aucune erreur
+- ✅ `npx vite build` : réussite
+- ✅ PNG vérifié : RGBA 1440×720, alpha transparent
+- ✅ Vérification statique : aucune utilisation de `GeographicLayer`/`LineSegments` dans `App.tsx`
+- ⏳ Validation visuelle 3D complète : impossible dans l’environnement courant, WebGL désactivé
+
+## 2026-09-10 — Suivi caméra dynamique des corps mobiles
+
+- ✅ `npx tsc --noEmit` : aucune erreur
+- ✅ `npx vite build` : réussite
+- ✅ Vérification statique : aucune référence résiduelle à `focusPosition` mémorisée
+- ⏳ Vérifications manuelles navigateur : sélection, suivi orbital, zoom proche, navigation et contrôles tactiles à exécuter
+
 ## 2026-09-02 — V1.4.1 Stabilisation avant le style (rotation, jour/nuit, « Voir plus », Lune)
 
 - ✅ `npx tsc --noEmit` : aucune erreur

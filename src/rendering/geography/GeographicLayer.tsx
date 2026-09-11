@@ -1,134 +1,83 @@
-import { useMemo } from "react"
+import { useEffect, useMemo } from "react"
 import * as THREE from "three"
-import { geoLonLatToVector3 } from "./geoProjection.ts"
-import countriesData from "../../../data/processed/countries-adm0-globe.json"
+import {
+  buildGeoBorderPositions,
+  GEO_LOD_STYLE,
+  type CountriesAdm0Data,
+} from "./geoLod.ts"
 
 /**
- * Epsilon appliqué au rayon terrestre pour placer les frontières
- * très légèrement au-dessus de la surface, évitant le z-fighting
- * sans produire un décalage visible.
+ * Couche de frontières ADM0 projetée sur la sphère terrestre.
  *
- * 0.002 = 0.2 % au-dessus de la surface.
+ * Architecture :
+ *   EarthGroup (position orbitale monde actuelle)
+ *   └── rotationGroup (rotation Y terrestre — jour/nuit + spin)
+ *       ├── EarthMesh (sphère opaque + earth.jpg)
+ *       ├── EarthBordersOverlay (earth-borders.png — LOD 0, toujours visible)
+ *       └── GeographicLayer (ce composant — LOD 1/2, vectoriel lazy)
+ *
+ * Enfant du même groupe de rotation que le mesh terrestre, le layer hérite
+ * naturellement de la rotation Y — aucun correctif d'angle nécessaire, aligné
+ * avec la texture pendant le mouvement orbital et le suivi caméra.
+ *
+ * Rendu : un seul `THREE.LineSegments` (PASS avant uniquement) :
+ *   - depthTest=true + depthWrite=false → la face arrière est masquée par le
+ *     globe opaque (aucune frontière visible à travers la Terre).
+ *   - renderOrder=1 → tracé après la sphère, sans halo additif.
+ *   - Couleur subtile (jamais rouge), opacité modérée.
+ *
+ * Le dataset est fourni par le parent (chargé lazy via `geoLod.ts`).
+ * AUCUN import statique de GeoJSON ici → rien dans le bundle initial.
+ * Géométrie construite une fois (useMemo), disposée à l'unmount (pas de fuite).
  */
-const GEOGRAPHIC_EPSILON = 0.002
 
-/**
- * Format réel du fichier data/processed/countries-adm0-globe.json :
- *
- *   {
- *     version: 1,
- *     level: "ADM0",
- *     detail: "globe",
- *     tolerance: 0.05,
- *     countries: [ { id, name, geometry } ]
- *   }
- *
- * Geometries :
- *   - Polygon      → coordinates: number[][][]   (liste d'anneaux de points [lon, lat])
- *   - MultiPolygon → coordinates: number[][][][] (liste de polygones, chacun liste d'anneaux)
- */
-type Ring = number[][]
-type PolygonCoordinates = number[][][]
-type MultiPolygonCoordinates = number[][][][]
-
-type CountryGeometry =
-  | { type: "Polygon"; coordinates: PolygonCoordinates }
-  | { type: "MultiPolygon"; coordinates: MultiPolygonCoordinates }
-
-interface CountryAdm0 {
-  id: string
-  name: string
-  geometry: CountryGeometry
-}
-
-export interface CountriesGlobeData {
-  version: number
-  level: string
-  detail: string
-  tolerance: number
-  countries: CountryAdm0[]
-}
+/** Alias historique conservé pour les consommateurs existants. */
+export type CountriesGlobeData = CountriesAdm0Data
 
 interface GeographicLayerProps {
   earthRadius: number
+  /** Dataset ADM0 déjà chargé (null/undefined → rien rendu, fallback LOD 0). */
+  data: CountriesAdm0Data | null | undefined
+  /** Niveau visuel : 1 = globe, 2 = pays détaillé (style adapté). */
+  lodLevel?: 1 | 2
+  color?: string
+  opacity?: number
 }
 
-/**
- * Rendu des frontières ADM0 (polygones et multi-polygones)
- * projetées directement sur la sphère terrestre.
- *
- * Architecture :
- *   EarthGroup
- *   ├── EarthMesh (sphere + texture)
- *   └── GeographicLayer (ce composant)
- *
- * Étant enfant du même groupe que le mesh terrestre, le layer
- * hérite naturellement de la rotation Y du groupe —aucun
- * correctif d'angle n'est nécessaire.
- *
- * Rendu : un seul `THREE.LineSegments` avec un `BufferGeometry`
- * fusionné pour toutes les frontières de tous les pays.
- */
-export function GeographicLayer({ earthRadius }: GeographicLayerProps) {
-  const geoRadius = earthRadius * (1 + GEOGRAPHIC_EPSILON)
+export function GeographicLayer({
+  earthRadius,
+  data,
+  lodLevel = 1,
+  color,
+  opacity,
+}: GeographicLayerProps) {
+  const style = GEO_LOD_STYLE[lodLevel] ?? GEO_LOD_STYLE[1]
 
   const geometry = useMemo(() => {
-    const positions: number[] = []
-    const data = countriesData as unknown as CountriesGlobeData
-
-    for (const country of data.countries) {
-      const { type, coordinates } = country.geometry
-
-      if (type === "Polygon") {
-        addPolygonRings(coordinates, positions, geoRadius)
-      } else {
-        for (const polygon of coordinates) {
-          addPolygonRings(polygon, positions, geoRadius)
-        }
-      }
-    }
-
+    if (!data) return null
+    const { positions } = buildGeoBorderPositions(data, earthRadius)
     const geo = new THREE.BufferGeometry()
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3))
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3))
     return geo
-  }, [geoRadius])
+  }, [data, earthRadius])
+
+  useEffect(() => {
+    return () => {
+      geometry?.dispose()
+    }
+  }, [geometry])
+
+  if (!geometry) return null
 
   return (
-    <lineSegments geometry={geometry}>
+    <lineSegments geometry={geometry} renderOrder={1}>
       <lineBasicMaterial
-  color="#ffffff"
-  transparent
-  opacity={0.8}
-  depthWrite={false}
-  depthTest={true}
-/>
+        color={color ?? style.color}
+        transparent
+        opacity={opacity ?? style.opacity}
+        depthTest
+        depthWrite={false}
+      />
     </lineSegments>
   )
-}
-
-/**
- * Ajoute les segments de ligne de chaque anneau (extérieur ou intérieur)
- * d'un polygone au tableau de positions.
- *
- * Chaque paire de points consécutifs produit 2 vertices
- * pour `THREE.LineSegments`.
- *
- * Les anneaux GeoJSON sont fermés (premier point == dernier point),
- * donc ring.length - 1 segments suffisent.
- */
-function addPolygonRings(
-  rings: PolygonCoordinates,
-  positions: number[],
-  radius: number,
-): void {
-  const v1 = new THREE.Vector3()
-  const v2 = new THREE.Vector3()
-
-  for (const ring of rings) {
-    for (let i = 0; i < ring.length - 1; i++) {
-      geoLonLatToVector3(ring[i][0], ring[i][1], radius, v1)
-      geoLonLatToVector3(ring[i + 1][0], ring[i + 1][1], radius, v2)
-      positions.push(v1.x, v1.y, v1.z, v2.x, v2.y, v2.z)
-    }
-  }
 }
