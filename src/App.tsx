@@ -5,9 +5,33 @@ import * as THREE from 'three'
 import nekoLogo from '@/imports/neko_eyer_logo.png'
 import { JPLProvider } from '@/orbital/ephemeris'
 import { defineOrbitalSystem, getBodyPosition } from '@/orbital'
-import { useSolarLighting, mapOrbitalDistanceToVisual, mapBodySizeToVisual, mapOrbitalPositionToVisual, getMaterialConfig, getRotationAngle, createPlanetMesh, createSunMesh, getTrajectoryConfig, createOrbitTrajectory, disposeOrbitTrajectory, type BodyType, getPlanetMaterialConfig, calculateInitialEarthRotationAngle, getBodyOrbitalElements, simulationTimeToUTC, calculateSubsolarPoint, GeographicLayer, runGeoProjectionSelftest } from "@/rendering"
+import {
+  useSolarLighting,
+  mapOrbitalDistanceToVisual,
+  mapBodySizeToVisual,
+  mapOrbitalPositionToVisual,
+  getMaterialConfig,
+  getRotationAngle,
+  createPlanetMesh,
+  createSunMesh,
+  getTrajectoryConfig,
+  createOrbitTrajectory,
+  disposeOrbitTrajectory,
+  type BodyType,
+  getPlanetMaterialConfig,
+  calculateInitialEarthRotationAngle,
+  getBodyOrbitalElements,
+  simulationTimeToUTC,
+  calculateSubsolarPoint,
+  GeographicLayer,
+  runGeoProjectionSelftest,
+  EarthGeoLodMonitor,
+  useEarthGeoLodDatasets,
+  type GeoLodLevel,
+  type CountriesAdm0Data,
+} from "@/rendering"
 import { useAstroModel } from "@/rendering/models"
-import { simulationTimeToDayId, formatLocalTime, formatUTCTime } from "@/time"
+import { SIMULATION_EPOCH_MS, simulationTimeToDayId, formatLocalTime, formatUTCTime } from "@/time"
 
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -31,6 +55,74 @@ interface Planet {
   eccentricity?: number
   inclination?: number
   nodeLongitude?: number
+}
+
+let earthBordersTexture: THREE.Texture | null = null
+let earthBordersTexturePromise: Promise<THREE.Texture> | null = null
+
+function loadEarthBordersTexture(): Promise<THREE.Texture> {
+  if (earthBordersTexture) return Promise.resolve(earthBordersTexture)
+  if (earthBordersTexturePromise) return earthBordersTexturePromise
+
+  earthBordersTexturePromise = new Promise((resolve, reject) => {
+    new THREE.TextureLoader().load(
+      '/textures/earth-borders.png',
+      (texture) => {
+        texture.colorSpace = THREE.SRGBColorSpace
+        texture.wrapS = THREE.ClampToEdgeWrapping
+        texture.wrapT = THREE.ClampToEdgeWrapping
+        texture.minFilter = THREE.LinearMipmapLinearFilter
+        texture.magFilter = THREE.LinearFilter
+        texture.generateMipmaps = true
+        texture.needsUpdate = true
+        earthBordersTexture = texture
+        resolve(texture)
+      },
+      undefined,
+      reject,
+    )
+  })
+
+  return earthBordersTexturePromise
+}
+
+function useEarthBordersTexture() {
+  const [texture, setTexture] = useState<THREE.Texture | null>(earthBordersTexture)
+
+  useEffect(() => {
+    let cancelled = false
+    loadEarthBordersTexture()
+      .then((loadedTexture) => {
+        if (!cancelled) setTexture(loadedTexture)
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  return texture
+}
+
+function EarthBordersOverlay({ radius }: { radius: number }) {
+  const texture = useEarthBordersTexture()
+  if (!texture) return null
+
+  return (
+    <mesh scale={1.001} renderOrder={1} raycast={() => null}>
+      <sphereGeometry args={[radius, 32, 32]} />
+      <meshBasicMaterial
+        map={texture}
+        transparent
+        opacity={0.9}
+        side={THREE.FrontSide}
+        depthTest
+        depthWrite={false}
+        toneMapped={false}
+      />
+    </mesh>
+  )
 }
 
 interface Star {
@@ -200,6 +292,56 @@ function getMoonOffset(time: number): [number, number, number] {
   ], true)
 }
 
+function getMoonOrbitalOffset(time: number): [number, number, number] {
+  const moon = ORBITAL_BODY_BY_ID.get('moon')
+  const earth = ORBITAL_BODY_BY_ID.get('earth')
+  if (!moon || !earth) return [0, 0, 0]
+  const moonPosition = getBodyPosition(moon, time)
+  const earthPosition = getBodyPosition(earth, time)
+  return [
+    moonPosition[0] - earthPosition[0],
+    moonPosition[1] - earthPosition[1],
+    moonPosition[2] - earthPosition[2],
+  ]
+}
+
+function getSimulationDayStartTime(simulationTime: number): number {
+  const dayId = simulationTimeToDayId(simulationTime)
+  return (dayId * 86400000 - SIMULATION_EPOCH_MS) / 3600000
+}
+
+function getDynamicJplPosition(
+  bodyId: string,
+  jplPosition: [number, number, number],
+  simulationTime: number,
+): [number, number, number] {
+  const body = ORBITAL_BODY_BY_ID.get(bodyId)
+  if (!body) return jplPosition
+
+  const anchorTime = getSimulationDayStartTime(simulationTime)
+  const currentPosition = getBodyPosition(body, simulationTime)
+  const anchorPosition = getBodyPosition(body, anchorTime)
+  return [
+    jplPosition[0] + currentPosition[0] - anchorPosition[0],
+    jplPosition[1] + currentPosition[1] - anchorPosition[1],
+    jplPosition[2] + currentPosition[2] - anchorPosition[2],
+  ]
+}
+
+function getDynamicJplMoonOffset(
+  jplPosition: [number, number, number],
+  simulationTime: number,
+): [number, number, number] {
+  const anchorTime = getSimulationDayStartTime(simulationTime)
+  const currentOffset = getMoonOrbitalOffset(simulationTime)
+  const anchorOffset = getMoonOrbitalOffset(anchorTime)
+  return [
+    jplPosition[0] + currentOffset[0] - anchorOffset[0],
+    jplPosition[1] + currentOffset[1] - anchorOffset[1],
+    jplPosition[2] + currentOffset[2] - anchorOffset[2],
+  ]
+}
+
 // ── 3D Scene Components ───────────────────────────────────────────────────────
 
 function getBodyVisualRadius(bodyId: string): number {
@@ -211,28 +353,64 @@ function getBodyVisualRadius(bodyId: string): number {
 
 function CameraController({
   focusTarget,
-  focusPosition,
+  trackingTarget,
+  trackedPosition,
   isFocusing,
   onTransitionDone,
   controlsRef,
+  earthPosition,
 }: {
   focusTarget: string | null
-  focusPosition: [number, number, number] | null
+  trackingTarget: string | null
+  trackedPosition: [number, number, number] | null
   isFocusing: boolean
   onTransitionDone: () => void
   controlsRef: React.RefObject<any>
+  earthPosition: [number, number, number] | null
 }) {
   const { camera } = useThree()
   const lerpProgress = useRef(0)
   const currentFocus = useRef<string | null>(null)
   const prevCameraPos = useRef(new THREE.Vector3())
   const prevControlsTarget = useRef(new THREE.Vector3())
+  const previousTrackedPosition = useRef(new THREE.Vector3())
+  const previousTrackingTarget = useRef<string | null>(null)
   const minDistanceSet = useRef(false)
   const prevFocusTarget = useRef<string | null>(null)
+  const earthWorldPos = useRef(new THREE.Vector3())
+  const earthMinRaised = useRef(false)
+  const preEarthMin = useRef(0.05)
+
+  // TEMP-DIAG: expose camera state for headless repro
+  const diagRef = useRef({ frames: 0, focusDone: false, tele: [] as any[] })
+  ;(globalThis as any).__diag = {
+    get state() {
+      return {
+        frames: diagRef.current.frames,
+        isFocusing,
+        focusTarget,
+        trackingTarget,
+        cam: camera.position.toArray().map(v => +v.toFixed(2)),
+        target: controlsRef.current ? controlsRef.current.target.toArray().map((v: number) => +v.toFixed(2)) : null,
+        distToTarget: controlsRef.current ? +(camera.position.distanceTo(controlsRef.current.target).toFixed(2)) : null,
+        focusDone: diagRef.current.focusDone,
+        currentFocus,
+        lerp: +lerpProgress.current.toFixed(3),
+        minDist: controlsRef.current ? controlsRef.current.minDistance : null,
+        minDistSet: minDistanceSet.current,
+        prevCam: prevCameraPos.current.toArray().map(v => +v.toFixed(2)),
+        tele: diagRef.current.tele.slice(-12),
+      }
+    },
+  }
 
   useFrame(() => {
     if (!controlsRef.current) return
     const controls = controlsRef.current
+
+    if (earthPosition) {
+      earthWorldPos.current.set(earthPosition[0], earthPosition[1], earthPosition[2])
+    }
 
     if (prevFocusTarget.current !== focusTarget) {
       if (focusTarget === null && prevFocusTarget.current !== null) {
@@ -242,7 +420,40 @@ function CameraController({
       prevFocusTarget.current = focusTarget
     }
 
-    if (isFocusing && focusPosition && focusTarget) {
+    if (trackingTarget !== previousTrackingTarget.current) {
+      previousTrackingTarget.current = trackingTarget
+      if (trackingTarget && trackedPosition) {
+        previousTrackedPosition.current.set(...trackedPosition)
+      }
+    } else if (trackingTarget && trackedPosition) {
+      const currentPosition = new THREE.Vector3(...trackedPosition)
+      const delta = currentPosition.clone().sub(previousTrackedPosition.current)
+      camera.position.add(delta)
+      controls.target.add(delta)
+      if (isFocusing && currentFocus.current === focusTarget) {
+        prevCameraPos.current.add(delta)
+        prevControlsTarget.current.add(delta)
+      }
+      previousTrackedPosition.current.copy(currentPosition)
+    }
+
+    if (!isFocusing && earthPosition) {
+      const earthRadius = mapBodySizeToVisual(2.8)
+      const targetToEarth = controls.target.distanceTo(earthWorldPos.current)
+      const safetyMin = earthRadius * 1.03
+      if (targetToEarth < earthRadius * 4) {
+        if (!earthMinRaised.current) {
+          earthMinRaised.current = true
+          preEarthMin.current = controls.minDistance
+        }
+        controls.minDistance = Math.max(controls.minDistance, safetyMin)
+      } else if (earthMinRaised.current) {
+        earthMinRaised.current = false
+        controls.minDistance = preEarthMin.current
+      }
+    }
+
+    if (isFocusing && trackedPosition && focusTarget) {
       if (currentFocus.current !== focusTarget) {
         currentFocus.current = focusTarget
         lerpProgress.current = 0
@@ -257,22 +468,48 @@ function CameraController({
       const bodyRadius = getBodyVisualRadius(focusTarget)
       const focusDistance = bodyRadius * 3.5
       const focusHeight = bodyRadius * 2.0
+      const currentPosition = new THREE.Vector3(...trackedPosition)
       const targetPos = new THREE.Vector3(
-        focusPosition[0] + focusDistance,
-        focusHeight,
-        focusPosition[2] + focusDistance,
+        currentPosition.x + focusDistance,
+        currentPosition.y + focusHeight,
+        currentPosition.z + focusDistance,
       )
       camera.position.lerpVectors(prevCameraPos.current, targetPos, t)
-      const lookTarget = new THREE.Vector3(focusPosition[0], focusPosition[1], focusPosition[2])
+      const lookTarget = currentPosition
       controls.target.lerpVectors(prevControlsTarget.current, lookTarget, t)
       controls.update()
 
-      if (lerpProgress.current >= 1 && !minDistanceSet.current) {
+if (lerpProgress.current >= 1 && !minDistanceSet.current) {
         controls.minDistance = bodyRadius * 1.05
         controls.maxDistance = Math.max(controls.maxDistance, focusDistance * 4)
         minDistanceSet.current = true
         currentFocus.current = null
+        diagRef.current.focusDone = true
         onTransitionDone()
+      }
+    }
+
+    diagRef.current.frames += 1
+    diagRef.current.tele.push({
+      f: diagRef.current.frames,
+      l: +lerpProgress.current.toFixed(3),
+      if: isFocusing,
+      cf: currentFocus.current,
+      md: minDistanceSet.current,
+      fd: diagRef.current.focusDone,
+    })
+    if (diagRef.current.tele.length > 200) diagRef.current.tele.splice(0, 50)
+
+    if (earthPosition) {
+      const earthRadius = mapBodySizeToVisual(2.8)
+      const camToEarth = camera.position.distanceTo(earthWorldPos.current)
+      if (camToEarth < earthRadius * 1.03) {
+        const dir = new THREE.Vector3().subVectors(camera.position, earthWorldPos.current)
+        if (dir.lengthSq() < 1e-10) {
+          dir.set(0, 1, 0)
+        }
+        dir.normalize()
+        camera.position.copy(earthWorldPos.current).addScaledVector(dir, earthRadius * 1.03)
       }
     }
   })
@@ -328,7 +565,7 @@ function Sun({
           depthWrite={false}
         />
       </mesh>
-      <mesh scale={1.08}>
+      <mesh scale={1.08} raycast={() => null}>
         <sphereGeometry args={[sunInnerHaloRadius, 32, 32]} />
         <meshBasicMaterial
           color="#fff2cc"
@@ -339,7 +576,7 @@ function Sun({
           depthWrite={false}
         />
       </mesh>
-      <mesh scale={1.03}>
+      <mesh scale={1.03} raycast={() => null}>
         <sphereGeometry args={[visualSunRadius, 32, 32]} />
         <meshBasicMaterial
           color="#fff8e7"
@@ -352,7 +589,7 @@ function Sun({
       </mesh>
       {/* Selection glow */}
       {isSelected && (
-        <mesh scale={1.03}>
+        <mesh scale={1.03} raycast={() => null}>
           <sphereGeometry args={[mapBodySizeToVisual(SUN.radius), 32, 32]} />
           <meshBasicMaterial
             color="#00d8ff"
@@ -368,10 +605,7 @@ function Sun({
       <primitive
         object={sunMesh}
         ref={meshRef}
-        onPointerDown={(e: { stopPropagation: () => void }) => {
-          e.stopPropagation()
-          onSelect(SUN)
-        }}
+        raycast={() => null}
       />
       {/* Invisible hitbox for easier clicking/touch */}
       <mesh
@@ -393,6 +627,7 @@ function Planet({
   timeRef,
   selectedId,
   onSelect,
+  onCountrySelect,
   selectedMoon,
   onSelectMoon,
   positionOverride,
@@ -401,12 +636,16 @@ function Planet({
   illuminated,
   moonIlluminated,
   initialRotationAngle = 0,
+  geoLodLevel = 0,
+  geoLod1Data = null,
+  geoLod2Data = null,
 }: {
   planet: Planet
   time: number
   timeRef: React.RefObject<number>
   selectedId: string | null
   onSelect: (p: Planet) => void
+  onCountrySelect?: (countryId: string) => void
   selectedMoon: boolean
   onSelectMoon: () => void
   positionOverride?: [number, number, number]
@@ -415,6 +654,9 @@ function Planet({
   illuminated?: boolean
   moonIlluminated?: boolean
   initialRotationAngle?: number
+  geoLodLevel?: GeoLodLevel
+  geoLod1Data?: CountriesAdm0Data | null
+  geoLod2Data?: CountriesAdm0Data | null
 }) {
   const rotationGroupRef = useRef<THREE.Group>(null)
   const moonMeshRef = useRef<THREE.Mesh>(null)
@@ -479,13 +721,17 @@ function Planet({
   return (
     <group position={pos}>
       <group ref={rotationGroupRef}>
-        <primitive
-          object={planetMesh}
-          onPointerDown={(e: { stopPropagation: () => void }) => {
-            e.stopPropagation()
-            onSelect(planet)
-          }}
-        />
+        <primitive object={planetMesh} raycast={() => null} />
+        {planet.id === 'earth' && <EarthBordersOverlay radius={visualRadius} />}
+        {/* LOD géographique : couches vectorielles lazy, enfants du groupe de
+            rotation (solidaires texture + spin + suivi orbital). LOD 0
+            (earth-borders.png) reste toujours visible = fallback. */}
+        {planet.id === 'earth' && geoLod1Data && geoLodLevel >= 1 && (
+          <GeographicLayer earthRadius={visualRadius} data={geoLod1Data} lodLevel={1} onCountrySelect={onCountrySelect} />
+        )}
+        {planet.id === 'earth' && geoLod2Data && geoLodLevel >= 2 && (
+          <GeographicLayer earthRadius={visualRadius} data={geoLod2Data} lodLevel={2} onCountrySelect={onCountrySelect} />
+        )}
         {/* Invisible hitbox for easier clicking */}
         <mesh
           onPointerDown={(e) => {
@@ -496,8 +742,8 @@ function Planet({
           <sphereGeometry args={[visualRadius * 1.5, 8, 8]} />
           <meshBasicMaterial transparent opacity={0} />
         </mesh>
-        {isSelected && (
-          <mesh scale={1.04}>
+        {isSelected && planet.id !== 'earth' && (
+          <mesh scale={1.04} raycast={() => null}>
             <sphereGeometry args={[visualRadius, 32, 32]} />
             <meshBasicMaterial
               color="#00d8ff"
@@ -510,7 +756,7 @@ function Planet({
           </mesh>
         )}
         {/* Geographic boundaries (ADM0) inherit the group rotation */}
-        {planet.id === 'earth' && <GeographicLayer earthRadius={visualRadius} />}
+        {planet.id === 'earth' && <GeographicLayer earthRadius={visualRadius} onCountrySelect={onCountrySelect} />}
       </group>
       {/* Saturn rings — anneaux 3D réalistes : bandes de transparence, éclairés par la scène */}
       {planet.id === 'saturn' && <SaturnRings radius={visualRadius} />}
@@ -521,12 +767,7 @@ function Planet({
           <OrbitalTrajectory radius={visualMoonOrbitRadius} bodyId="moon" />
           <group position={moonOffset}>
           <group ref={moonMeshRef}>
-            <mesh
-              onPointerDown={(e) => {
-                e.stopPropagation()
-                onSelectMoon()
-              }}
-            >
+            <mesh raycast={() => null}>
               <sphereGeometry args={[visualMoonRadius, 16, 16]} />
               <meshStandardMaterial
                 color={moonTexture ? "#ffffff" : moonData.color}
@@ -547,7 +788,7 @@ function Planet({
               <meshBasicMaterial transparent opacity={0} />
             </mesh>
             {selectedId === 'moon' && (
-              <mesh scale={1.06}>
+              <mesh scale={1.06} raycast={() => null}>
                 <sphereGeometry args={[visualMoonRadius, 16, 16]} />
                 <meshBasicMaterial
                   color="#00d8ff"
@@ -775,11 +1016,13 @@ function SolarSystemScene({
   isPlaying,
   timeSpeed,
   focusTarget,
-  focusPosition,
+  trackingTarget,
+  trackedPosition,
   isFocusing,
   onTransitionDone,
   controlsRef,
   onTimeUpdate,
+  onCountrySelect,
   jplEarthPosition,
   jplMoonPosition,
   jplMercuryPosition,
@@ -795,11 +1038,13 @@ function SolarSystemScene({
   isPlaying: boolean
   timeSpeed: number
   focusTarget: string | null
-  focusPosition: [number, number, number] | null
+  trackingTarget: string | null
+  trackedPosition: [number, number, number] | null
   isFocusing: boolean
   onTransitionDone: () => void
   controlsRef: React.RefObject<any>
   onTimeUpdate: (t: number) => void
+  onCountrySelect: (countryId: string) => void
   jplEarthPosition?: [number, number, number] | null
   jplMoonPosition?: [number, number, number] | null
   jplMercuryPosition?: [number, number, number] | null
@@ -811,7 +1056,16 @@ function SolarSystemScene({
   jplNeptunePosition?: [number, number, number] | null
 }) {
   const timeRef = useRef(0)
-  const frameCount = useRef(0)
+
+  // LOD géographique Terre : niveau dérivé de la distance caméra ↔ Terre
+  // (position monde actuelle, compatible mouvement orbital + suivi).
+  // Lecture seule — aucun système caméra/tracking modifié.
+  const [geoLodLevel, setGeoLodLevel] = useState<GeoLodLevel>(0)
+  const { lod1Data: geoLod1Data, lod2Data: geoLod2Data } = useEarthGeoLodDatasets(geoLodLevel)
+  const handleGeoLodLevelChange = useCallback((level: GeoLodLevel) => {
+    setGeoLodLevel(level)
+  }, [])
+  const earthVisualRadius = mapBodySizeToVisual(2.8)
 
   const earthInitialRotationAngle = useMemo(() => {
     const earthAtEpoch = jplEarthPosition
@@ -826,34 +1080,33 @@ function SolarSystemScene({
       // À ×1 : 1 s réelle = 1/3600 h = 1 s simulée (temps réel).
       timeRef.current += (delta * timeSpeed) / 3600
     }
-    frameCount.current++
-    if (frameCount.current % 6 === 0) {
-      onTimeUpdate(timeRef.current)
-    }
-
+    onTimeUpdate(timeRef.current)
   })
 
-  const jplPositions: Record<string, [number, number, number] | null | undefined> = {
-    earth: jplEarthPosition,
-    mercury: jplMercuryPosition,
-    venus: jplVenusPosition,
-    mars: jplMarsPosition,
-    jupiter: jplJupiterPosition,
-    saturn: jplSaturnPosition,
-    uranus: jplUranusPosition,
-    neptune: jplNeptunePosition,
+  const dynamicJplPositions: Record<string, [number, number, number] | null> = {
+    earth: jplEarthPosition ? getDynamicJplPosition('earth', jplEarthPosition, timeRef.current) : null,
+    mercury: jplMercuryPosition ? getDynamicJplPosition('mercury', jplMercuryPosition, timeRef.current) : null,
+    venus: jplVenusPosition ? getDynamicJplPosition('venus', jplVenusPosition, timeRef.current) : null,
+    mars: jplMarsPosition ? getDynamicJplPosition('mars', jplMarsPosition, timeRef.current) : null,
+    jupiter: jplJupiterPosition ? getDynamicJplPosition('jupiter', jplJupiterPosition, timeRef.current) : null,
+    saturn: jplSaturnPosition ? getDynamicJplPosition('saturn', jplSaturnPosition, timeRef.current) : null,
+    uranus: jplUranusPosition ? getDynamicJplPosition('uranus', jplUranusPosition, timeRef.current) : null,
+    neptune: jplNeptunePosition ? getDynamicJplPosition('neptune', jplNeptunePosition, timeRef.current) : null,
   }
   const planetPositions: Record<string, [number, number, number]> = { sun: [0, 0, 0] }
   for (const planet of PLANETS) {
     if (planet.id === 'sun' || planet.id === 'moon') continue
-    const jplPosition = jplPositions[planet.id]
+    const jplPosition = dynamicJplPositions[planet.id]
     planetPositions[planet.id] = jplPosition
       ? mapOrbitalPositionToVisual(jplPosition)
       : getPlanetPosition(planet, timeRef.current)
   }
   const earthPosition = planetPositions.earth
-  const moonOffset = jplMoonPosition
-    ? mapOrbitalPositionToVisual(jplMoonPosition, true)
+  const dynamicJplMoonPosition = jplMoonPosition
+    ? getDynamicJplMoonOffset(jplMoonPosition, timeRef.current)
+    : null
+  const moonOffset = dynamicJplMoonPosition
+    ? mapOrbitalPositionToVisual(dynamicJplMoonPosition, true)
     : getMoonOffset(timeRef.current)
   planetPositions.moon = [
     earthPosition[0] + moonOffset[0],
@@ -882,10 +1135,18 @@ function SolarSystemScene({
 
       <CameraController
         focusTarget={focusTarget}
-        focusPosition={focusPosition}
+        trackingTarget={trackingTarget}
+        trackedPosition={trackedPosition}
         isFocusing={isFocusing}
         onTransitionDone={onTransitionDone}
         controlsRef={controlsRef}
+        earthPosition={planetPositions.earth}
+      />
+
+      <EarthGeoLodMonitor
+        earthPosition={planetPositions.earth}
+        earthRadius={earthVisualRadius}
+        onLevelChange={handleGeoLodLevelChange}
       />
 
       <OrbitControls
@@ -917,14 +1178,18 @@ function SolarSystemScene({
               timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
+              onCountrySelect={onCountrySelect}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
-              positionOverride={jplEarthPosition}
-              moonPositionOverride={jplMoonPosition}
+              positionOverride={dynamicJplPositions.earth ?? undefined}
+              moonPositionOverride={dynamicJplMoonPosition}
               bodyType="earth"
               illuminated={planetIllumination.earth}
               moonIlluminated={planetIllumination.moon}
               initialRotationAngle={earthInitialRotationAngle}
+              geoLodLevel={geoLodLevel}
+              geoLod1Data={geoLod1Data}
+              geoLod2Data={geoLod2Data}
             />
           )
         }
@@ -939,7 +1204,7 @@ function SolarSystemScene({
               onSelect={onSelectPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
-              positionOverride={jplMercuryPosition}
+              positionOverride={dynamicJplPositions.mercury ?? undefined}
               bodyType="mercury"
               illuminated={planetIllumination.mercury}
             />
@@ -956,7 +1221,7 @@ function SolarSystemScene({
               onSelect={onSelectPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
-              positionOverride={jplVenusPosition}
+              positionOverride={dynamicJplPositions.venus ?? undefined}
               bodyType="venus"
               illuminated={planetIllumination.venus}
             />
@@ -973,7 +1238,7 @@ function SolarSystemScene({
               onSelect={onSelectPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
-              positionOverride={jplMarsPosition}
+              positionOverride={dynamicJplPositions.mars ?? undefined}
               bodyType="mars"
               illuminated={planetIllumination.mars}
             />
@@ -990,7 +1255,7 @@ function SolarSystemScene({
               onSelect={onSelectPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
-              positionOverride={jplJupiterPosition}
+              positionOverride={dynamicJplPositions.jupiter ?? undefined}
               bodyType="jupiter"
               illuminated={planetIllumination.jupiter}
             />
@@ -1007,7 +1272,7 @@ function SolarSystemScene({
               onSelect={onSelectPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
-              positionOverride={jplSaturnPosition}
+              positionOverride={dynamicJplPositions.saturn ?? undefined}
               bodyType="saturn"
               illuminated={planetIllumination.saturn}
             />
@@ -1024,7 +1289,7 @@ function SolarSystemScene({
               onSelect={onSelectPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
-              positionOverride={jplUranusPosition}
+              positionOverride={dynamicJplPositions.uranus ?? undefined}
               bodyType="uranus"
               illuminated={planetIllumination.uranus}
             />
@@ -1041,7 +1306,7 @@ function SolarSystemScene({
               onSelect={onSelectPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
-              positionOverride={jplNeptunePosition}
+              positionOverride={dynamicJplPositions.neptune ?? undefined}
               bodyType="neptune"
               illuminated={planetIllumination.neptune}
             />
@@ -1055,11 +1320,15 @@ function SolarSystemScene({
             timeRef={timeRef}
             selectedId={selectedPlanet?.id ?? null}
             onSelect={onSelectPlanet}
+            onCountrySelect={onCountrySelect}
             selectedMoon={selectedPlanet?.id === 'moon'}
             onSelectMoon={handleSelectMoon}
-            moonPositionOverride={p.id === 'earth' ? jplMoonPosition : undefined}
+            moonPositionOverride={p.id === 'earth' ? dynamicJplMoonPosition : undefined}
             bodyType={p.id as BodyType}
             illuminated={planetIllumination[p.id as keyof typeof planetIllumination]}
+            geoLodLevel={p.id === 'earth' ? geoLodLevel : 0}
+            geoLod1Data={p.id === 'earth' ? geoLod1Data : null}
+            geoLod2Data={p.id === 'earth' ? geoLod2Data : null}
           />
         )
       })}
@@ -1373,20 +1642,6 @@ function TimeControlBar({
         ))}
       </div>
 
-      <div className="w-px h-7 bg-white/8 flex-shrink-0 hidden sm:block" />
-
-      <div className="hidden sm:flex items-center gap-2">
-        <input
-          type="range"
-          min="0.1"
-          max="10"
-          step="0.1"
-          value={speed}
-          onChange={e => onSpeedChange(parseFloat(e.target.value))}
-          className="w-20"
-        />
-        <span className="text-[10px] font-mono text-nk-cyan w-8 flex-shrink-0">×{speed.toFixed(1)}</span>
-      </div>
     </GlassPanel>
   )
 }
@@ -1767,10 +2022,11 @@ function HeroSection() {
 
 function ExplorerSection() {
   const [selectedPlanet, setSelectedPlanet] = useState<Planet | null>(null)
+  const [selectedCountry, setSelectedCountry] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(true)
   const [timeSpeed, setTimeSpeed] = useState(1)
   const [focusTarget, setFocusTarget] = useState<string | null>(null)
-  const [focusPosition, setFocusPosition] = useState<[number, number, number] | null>(null)
+  const [trackingTarget, setTrackingTarget] = useState<string | null>(null)
   const [isFocusing, setIsFocusing] = useState(false)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
   const [simTime, setSimTime] = useState(0)
@@ -1789,63 +2045,63 @@ function ExplorerSection() {
   const controlsRef = useRef<any>(null)
 
   const handleSelectPlanet = useCallback((p: Planet) => {
+    ;(globalThis as any).__events.push({ t: performance.now(), kind: 'select', id: p.id, sel: p.name })
     setIsDetailOpen(false)
     setSelectedPlanet(p)
+    setTrackingTarget(p.id)
+    setFocusTarget(p.id)
+    setIsFocusing(true)
   }, [])
 
   const handleFocus = useCallback(() => {
+    ;(globalThis as any).__events.push({ t: performance.now(), kind: 'focus', id: selectedPlanet?.id })
     if (!selectedPlanet) return
-    let pos: [number, number, number]
-
-    if (selectedPlanet.id === 'moon') {
-      const earthPos = getPlanetPosition(
-        PLANETS.find(p => p.id === 'earth')!,
-        simTime,
-      )
-      const moonOff = getMoonOffset(simTime)
-      pos = [
-        earthPos[0] + moonOff[0],
-        earthPos[1] + moonOff[1],
-        earthPos[2] + moonOff[2],
-      ]
-    } else if (selectedPlanet.id === 'earth' && jplEarthPosition) {
-      pos = mapOrbitalPositionToVisual(jplEarthPosition)
-    } else if (selectedPlanet.id === 'mercury' && jplMercuryPosition) {
-      pos = mapOrbitalPositionToVisual(jplMercuryPosition)
-    } else if (selectedPlanet.id === 'venus' && jplVenusPosition) {
-      pos = mapOrbitalPositionToVisual(jplVenusPosition)
-    } else if (selectedPlanet.id === 'mars' && jplMarsPosition) {
-      pos = mapOrbitalPositionToVisual(jplMarsPosition)
-    } else if (selectedPlanet.id === 'jupiter' && jplJupiterPosition) {
-      pos = mapOrbitalPositionToVisual(jplJupiterPosition)
-    } else if (selectedPlanet.id === 'saturn' && jplSaturnPosition) {
-      pos = mapOrbitalPositionToVisual(jplSaturnPosition)
-    } else if (selectedPlanet.id === 'uranus' && jplUranusPosition) {
-      pos = mapOrbitalPositionToVisual(jplUranusPosition)
-    } else if (selectedPlanet.id === 'neptune' && jplNeptunePosition) {
-      pos = mapOrbitalPositionToVisual(jplNeptunePosition)
-    } else {
-      pos = getPlanetPosition(selectedPlanet, simTime)
-    }
-
     setFocusTarget(selectedPlanet.id)
-    setFocusPosition(pos)
     setIsFocusing(true)
-  }, [selectedPlanet, simTime, jplEarthPosition, jplMercuryPosition, jplVenusPosition, jplMarsPosition, jplJupiterPosition, jplSaturnPosition, jplUranusPosition, jplNeptunePosition])
+  }, [selectedPlanet])
 
-  const handleTransitionDone = useCallback(() => {
+  const handleDeselectPlanet = useCallback(() => {
+    ;(globalThis as any).__events.push({ t: performance.now(), kind: 'deselect' })
+    setSelectedPlanet(null)
+    setSelectedCountry(null)
+    setTrackingTarget(null)
+    setFocusTarget(null)
     setIsFocusing(false)
   }, [])
 
-  // Focus automatique : quand un objet est sélectionné,
-  // appeler handleFocus pour lancer la transition caméra.
-  // On vérifie !isFocusing pour éviter de relancer une transition
-  // si le Focus est déjà actif (ex. bouton manuel).
+  const handleCountrySelect = useCallback((countryId: string) => {
+    setSelectedCountry(countryId)
+    ;(globalThis as any).__events.push({ t: performance.now(), kind: 'countrySelect', id: countryId })
+  }, [])
+
+  const handleTransitionDone = useCallback(() => {
+    ;(globalThis as any).__events.push({ t: performance.now(), kind: 'transDone' })
+    setIsFocusing(false)
+  }, [])
+
+  // TEMP-DIAG: expose selection for headless repro
+  if (!(globalThis as any).__events) (globalThis as any).__events = []
+  ;(globalThis as any).__select = (id: string) => {
+    const p = PLANETS.find(x => x.id === id) ?? (id === 'sun' ? SUN : null)
+    if (p) handleSelectPlanet(p)
+    return `selected:${id}`
+  }
+  ;(globalThis as any).__deselect = () => {
+    handleDeselectPlanet()
+    return 'deselected'
+  }
+
+  // Focus automatique : la sélection initiale et le bouton manuel
+  // pilotent déjà l'état de focus. On ne relance pas un focus sur
+  // chaque fin de transition si la cible sélectionnée est déjà la bonne.
   useEffect(() => {
-    if (selectedPlanet && !isFocusing) {
-      handleFocus()
-    }
-  }, [selectedPlanet])
+    if (!selectedPlanet) return
+    if (isFocusing) return
+    if (focusTarget === selectedPlanet.id) return
+
+    setFocusTarget(selectedPlanet.id)
+    setIsFocusing(true)
+  }, [selectedPlanet, focusTarget, isFocusing])
 
   // Fetch JPL Earth position when simulated DATE changes (throttled to 1 fetch per day)
   useEffect(() => {
@@ -1943,13 +2199,19 @@ function ExplorerSection() {
     for (const planet of PLANETS) {
       if (planet.id === 'sun' || planet.id === 'moon') continue
       const jplPos = jplPositionsMap[planet.id]
-      positions[planet.id] = jplPos
-        ? mapOrbitalPositionToVisual(jplPos)
+      const dynamicJplPos = jplPos
+        ? getDynamicJplPosition(planet.id, jplPos, simTime)
+        : null
+      positions[planet.id] = dynamicJplPos
+        ? mapOrbitalPositionToVisual(dynamicJplPos)
         : getPlanetPosition(planet, simTime)
     }
     const earthPos = positions.earth
-    const moonOffset = jplMoonPosition
-      ? mapOrbitalPositionToVisual(jplMoonPosition, true)
+    const dynamicJplMoonOffset = jplMoonPosition
+      ? getDynamicJplMoonOffset(jplMoonPosition, simTime)
+      : null
+    const moonOffset = dynamicJplMoonOffset
+      ? mapOrbitalPositionToVisual(dynamicJplMoonOffset, true)
       : getMoonOffset(simTime)
     positions.moon = [
       earthPos[0] + moonOffset[0],
@@ -1990,11 +2252,13 @@ function ExplorerSection() {
             isPlaying={isPlaying}
             timeSpeed={timeSpeed}
             focusTarget={focusTarget}
-            focusPosition={focusPosition}
+            trackingTarget={trackingTarget}
+            trackedPosition={planetPositions[trackingTarget ?? focusTarget ?? ''] ?? null}
             isFocusing={isFocusing}
             onTransitionDone={handleTransitionDone}
             controlsRef={controlsRef}
             onTimeUpdate={setSimTime}
+            onCountrySelect={handleCountrySelect}
             jplEarthPosition={jplEarthPosition}
             jplMoonPosition={jplMoonPosition}
             jplMercuryPosition={jplMercuryPosition}
@@ -2040,7 +2304,7 @@ function ExplorerSection() {
         >
           <ObjectInfoPanel
             planet={selectedPlanet}
-            onClose={() => setSelectedPlanet(null)}
+            onClose={handleDeselectPlanet}
             onFocus={handleFocus}
             simTime={simTime}
             jplPositions={{

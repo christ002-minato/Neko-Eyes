@@ -1,12 +1,8 @@
 import type { EphemerisState, SceneEphemerisState } from "./types.ts"
 import { simulationTimeToDateStr } from "../../time.ts"
 
-const JPL_BASE_URL = 'https://ssd-api.jpl.nasa.gov/api/horizons.api'
+const JPL_BASE_URL = '/api/jpl'
 
-/**
- * Mapping des identifiants de corps vers les IDs JPL Horizons.
- * La Terre utilise l'ID 399 (héliocentrique).
- */
 const JPL_BODY_IDS: Record<string, string> = {
   earth: '399',
   moon: '301',
@@ -23,67 +19,67 @@ function jplIdForBody(bodyId: string): string | undefined {
   return JPL_BODY_IDS[bodyId]
 }
 
-/**
- * Parse la réponse de l'API JPL Horizons et extrait l'état épimérique.
- */
 function parseJPLResponse(data: any, bodyId: string): EphemerisState | null {
   try {
-    const result = data?.result?.[0]
-    if (!result || !result.data?.[0]) return null
+    if (data && Array.isArray(data.position) && data.position.length >= 3) {
+      const [x, y, z] = data.position
+      const arrX = Number(x)
+      const arrY = Number(y)
+      const arrZ = Number(z)
+      if ([arrX, arrY, arrZ].some(Number.isNaN)) return null
 
-    const row = result.data[0]
-    // JPL renvoie les positions en unités astronomiques (AU)
-    // Vecteur de position : x, y, z
-    const positionX = parseFloat(row.x)
-    const positionY = parseFloat(row.y)
-    const positionZ = parseFloat(row.z)
+      return {
+        position: [arrX, arrY, arrZ] as [number, number, number],
+        velocity: Array.isArray(data.velocity) && data.velocity.length >= 3
+          ? [Number(data.velocity[0]), Number(data.velocity[1]), Number(data.velocity[2])] as [number, number, number]
+          : undefined,
+        unit: data.unit ?? 'AU',
+        referenceFrame: data.referenceFrame ?? 'ICRF',
+        epoch: data.epoch ?? undefined,
+        bodyId,
+      }
+    }
 
-    if (isNaN(positionX) || isNaN(positionY) || isNaN(positionZ)) return null
+    const result = data?.result?.[0] ?? data?.result
+    const rows = Array.isArray(result?.data) ? result.data : []
+    const row = rows.find((entry: any) => Array.isArray(entry) || (entry && typeof entry === 'object' && entry.x !== undefined))
 
-    // Unité par défaut : UA (astronomiques)
-    // Vitesse optionnelle
-    const vx = row.vx ? parseFloat(row.vx) : NaN
-    const vy = row.vy ? parseFloat(row.vy) : NaN
-    const vz = row.vz ? parseFloat(row.vz) : NaN
+    if (!row) return null
 
-    const hasVelocity = !isNaN(vx) || !isNaN(vy) || !isNaN(vz)
+    const position = Array.isArray(row)
+      ? [Number(row[1]), Number(row[2]), Number(row[3])]
+      : [Number(row.x), Number(row.y), Number(row.z)]
 
-    const unit: string = 'AU'
-    const referenceFrame: string = 'J2000'
+    if (position.some(Number.isNaN)) return null
+
+    const velocity = Array.isArray(row)
+      ? [Number(row[4] ?? 0), Number(row[5] ?? 0), Number(row[6] ?? 0)]
+      : [Number(row.vx ?? 0), Number(row.vy ?? 0), Number(row.vz ?? 0)]
 
     return {
-      position: [positionX, positionY, positionZ] as [number, number, number],
-      velocity: hasVelocity ? [vx, vy, vz] as [number, number, number] : undefined,
-      unit,
-      referenceFrame,
-      epoch: result?.datetime?.[0] ?? undefined,
+      position: [position[0], position[1], position[2]] as [number, number, number],
+      velocity: [velocity[0], velocity[1], velocity[2]] as [number, number, number],
+      unit: 'AU',
+      referenceFrame: 'ICRF',
+      epoch: typeof row === 'object' ? (row.epoch ?? row.datetime ?? undefined) : undefined,
       bodyId,
     }
-  } catch (e) {
-    console.error('Erreur parsing réponse JPL:', e)
+  } catch (error) {
+    console.error('Erreur parsing réponse JPL proxy:', error)
     return null
   }
 }
 
 export class JPLProvider {
-  /** Cache mémoire : bodyId -> EphemerisState */
   private cache: Map<string, EphemerisState> = new Map()
-  /** Timeout par défaut en ms pour les requêtes JPL */
   private defaultTimeout: number = 10000
-  /** Indique si le provider est en mode dégradé (cache uniquement) */
   private degradedMode: boolean = false
-  /** Contrôle d'annulation pour les requêtes timeout */
   private abortController: AbortController | undefined
+  private queue: Promise<unknown> = Promise.resolve()
 
-  /**
-   * Crée une nouvelle instance de JPLProvider.
-   *
-   * @param options Options de configuration
-   */
   constructor(options?: {
     defaultTimeout?: number
     degradedMode?: boolean
-    /** Cache prérempli pour le prototype Earth */
     initialCache?: Map<string, EphemerisState>
   }) {
     if (options?.defaultTimeout !== undefined) {
@@ -97,22 +93,9 @@ export class JPLProvider {
         this.cache.set(key, value)
       }
     }
-    this.abortController = undefined
   }
 
-  /**
-   * Récupère l'état épimérique d'un corps à un instant donné.
-   * Utilise un cache mémoire pour éviter les requêtes réseau répétées.
-   *
-   * @param bodyId Identifiant du corps (ex. : "earth", "moon")
-   * @param simulationTime Temps simulé actuel (unités de l'application Neko Eyes)
-   * @returns État épimérique du corps, ou null si inconnu
-   */
-  async getState(
-    bodyId: string,
-    simulationTime: number,
-  ): Promise<EphemerisState | null> {
-    // Vérifier d'abord le cache
+  async getState(bodyId: string, simulationTime: number): Promise<EphemerisState | null> {
     const cached = this.cache.get(bodyId)
     if (cached !== undefined) {
       return cached
@@ -124,78 +107,61 @@ export class JPLProvider {
 
     const jplBodyId = jplIdForBody(bodyId)
     if (!jplBodyId) {
-      // BodyId inconnu → retour null (non critique, le modèle orbital continue)
       return null
     }
 
-try {
-      const date = simulationTimeToDateStr(simulationTime)
+    const task = async () => {
+      try {
+        const date = simulationTimeToDateStr(simulationTime)
+        const params = new URLSearchParams({
+          bodyId,
+          date,
+        })
 
-      const params = new URLSearchParams({
-        id: jplBodyId,
-        format: 'json',
-        epoch_type: 'date',
-        date: date,
-      })
+        this.abortController = new AbortController()
+        const timeoutId = setTimeout(() => this.abortController?.abort(), this.defaultTimeout)
 
-      // Reset abort controller for this request
-      this.abortController = new AbortController()
-      const timeoutId = setTimeout(
-        () => this.abortController!.abort(),
-        this.defaultTimeout
-      )
+        const response = await fetch(`${JPL_BASE_URL}?${params.toString()}`, {
+          signal: this.abortController.signal,
+          headers: { Accept: 'application/json' },
+          cache: 'no-store',
+        })
 
-      const response = await fetch(`${JPL_BASE_URL}?${params}`, {
-        signal: this.abortController.signal,
-        headers: {
-          'Accept': 'application/json',
-        },
-      })
+        clearTimeout(timeoutId)
 
-      clearTimeout(timeoutId)
+        if (!response.ok) {
+          this.degradedMode = true
+          return null
+        }
 
-      if (!response.ok) {
-        // En cas d'erreur réseau ou API, passer en mode dégradé
-        this.degradedMode = true
+        const data = await response.json()
+        const state = parseJPLResponse(data, bodyId)
+
+        if (state) {
+          this.cache.set(bodyId, state)
+        }
+
+        return state
+      } catch (error) {
+        if (!this.degradedMode) {
+          this.degradedMode = true
+        }
         return null
       }
-
-      const data = await response.json()
-      const state = parseJPLResponse(data, bodyId)
-
-      if (state) {
-        // Mettre en cache le résultat
-        this.cache.set(bodyId, state)
-      }
-      return state
-    } catch (error) {
-      // Erreur réseau ou inattendue → mode dégradé
-      if (!this.degradedMode) {
-        this.degradedMode = true
-      }
-      return null
     }
+
+    const previous = this.queue
+    this.queue = previous.then(task, task)
+    return await this.queue.then(() => task())
   }
 
-  /**
-   * Convertit un état épimérique brut en état compatible avec la scène Three.js.
-   *
-   * @param state État épimérique brut depuis le provider
-   * @returns État simplifié consommable par le modèle orbital Three.js
-   */
   toSceneState(state: EphemerisState): SceneEphemerisState {
     if (!state) {
       return { position: [0, 0, 0], bodyId: '' }
     }
 
-    const position: [number, number, number] = [
-      state.position[0],
-      state.position[1],
-      state.position[2],
-    ]
-
     return {
-      position,
+      position: [state.position[0], state.position[1], state.position[2]],
       bodyId: state.bodyId,
     }
   }

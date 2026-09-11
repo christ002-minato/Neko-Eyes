@@ -2,6 +2,7 @@ import fs from "node:fs"
 
 const FILES = [
   "data/processed/countries-adm0-test.json",
+  "data/processed/countries-adm0-raw.json",
   "data/processed/countries-adm0-globe.json",
   "data/processed/countries-adm0-country.json",
   "data/processed/countries-adm0-detail.json",

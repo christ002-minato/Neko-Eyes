@@ -63,6 +63,7 @@ export function createOrbitTrajectory(options: OrbitTrajectoryOptions): OrbitTra
   ;(material as unknown as { linewidth: number }).linewidth = options.lineWidth
 
   const line = new Line2(geometry, material)
+  ;(line as unknown as { raycast?: (raycaster: unknown, intersects: unknown[]) => void }).raycast = () => undefined
   return { line, material }
 }
 

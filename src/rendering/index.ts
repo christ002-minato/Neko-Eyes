@@ -32,4 +32,26 @@ export * from "./models/index.ts"
 export { TRAJECTORY_COLORS, DEFAULT_TRAJECTORY_COLOR, getTrajectoryColor, getTrajectoryConfig, type TrajectoryVisualConfig } from "./trajectory.ts"
 export { createOrbitTrajectory, disposeOrbitTrajectory, type OrbitTrajectory, type OrbitTrajectoryOptions } from "./orbitTrajectory.ts"
 export * from "./astronomicalTime.ts"
-export { GeographicLayer, geoLonLatToVector3, runGeoProjectionSelftest } from "./geography/index.ts"
+export {
+  GeographicLayer,
+  geoLonLatToVector3,
+  runGeoProjectionSelftest,
+  EarthGeoLodMonitor,
+  useEarthGeoLodDatasets,
+  GEO_LOD_THRESHOLDS,
+  GEO_LOD_STYLE,
+  GEO_LOD_MONITOR,
+  GEOGRAPHIC_EPSILON,
+  GEO_LOD_EXCLUDED_DATASETS,
+  resolveGeoLodLevel,
+  loadGeoLodDataset,
+  releaseGeoLodDataset,
+  registerGeoLodSource,
+  hasGeoLodSource,
+  getGeoLodDatasetInfo,
+  buildGeoBorderPositions,
+  type GeoLodLevel,
+  type GeoLodStatus,
+  type CountriesAdm0Data,
+  type EarthGeoLodDatasets,
+} from "./geography/index.ts"

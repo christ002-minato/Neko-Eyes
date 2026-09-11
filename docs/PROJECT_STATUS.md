@@ -1,6 +1,22 @@
 # PROJECT_STATUS — Neko Eyes
 
-> Dernière mise à jour : 2026-09-02 (V1.5.0)
+> Dernière mise à jour : 2026-09-10 (V1.5.1)
+
+## Correction horloge globale — validée techniquement
+
+- `timeRef.current` reste la source unique du temps simulé; sélection, focus et tracking ne la modifient pas.
+- Les échantillons JPL journaliers servent d’ancrage, puis le delta orbital dépendant du temps simulé est appliqué entre deux échantillons.
+- Les positions Terre, Mars, Jupiter et Lune évoluent donc avec `0.1x / 1x / 5x / 10x` sans requête JPL par frame.
+- Pause = gel du temps, des orbites et des rotations; reprise = continuation normale.
+- Selftests orbital, rotation, éphemeris, TypeScript et build passent.
+
+## Correction Camera Follow — validée techniquement
+
+- Le `CameraController` suit dynamiquement le corps mobile sélectionné via son identifiant et sa position monde courante.
+- À chaque déplacement, le même delta est appliqué à la caméra et à `OrbitControls.target`.
+- Le focus utilise la position courante; le Soleil conserve son comportement statique.
+- La sélection ne réutilise plus une position monde mémorisée au clic; le Soleil passe aussi par `trackingTarget`.
+- TypeScript et build passent.
 
 ## Neko Eyes V0
 

@@ -23,7 +23,7 @@
 
 - **CameraController** — reste celui de la **V0** stable (`d534dd3`).
 - **OrbitControls** — wrapper Drei, damping, zoom, rotation préservés.
-- **Aucun Camera Follow avancé** n'est actuellement implémenté.
+- **Camera Follow dynamique** : le corps sélectionné est suivi par translation conjointe de la caméra et de `OrbitControls.target` selon son delta de position monde.
 - Focus + zoom automatique : lorsqu'un objet est sélectionné, `handleFocus()` lance une transition smoothstep vers la position mondiale de l'objet avec offset `[+15, 10, +15]`.
 
 ### Séparation claire

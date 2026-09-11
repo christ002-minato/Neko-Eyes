@@ -37,7 +37,7 @@ export function createSunLight(
   const dayNightConfig: DayNightConfig = {
     hasDaylight: true,
     daylightDirection: sunToEarth,
-    ambientIntensity: 0.02,
+    ambientIntensity: 0.08,
     directIntensity: 2.8,
   }
 

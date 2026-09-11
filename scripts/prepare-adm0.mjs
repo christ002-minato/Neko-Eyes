@@ -29,8 +29,8 @@ for (const feature of data.features) {
   const shapeType = properties.shapeType
   const geometry = feature.geometry
 
+  if (!shapeType || shapeType !== "ADM0") continue
   if (!TARGETS.has(code)) continue
-  if (shapeType !== "ADM0") continue
   if (!geometry) continue
 
   countries.push({

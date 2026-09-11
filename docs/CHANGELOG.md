@@ -2,6 +2,34 @@
 
 > Historique des étapes réellement réalisées — uniquement les modifications confirmées.
 
+## Correction horloge globale et mouvement JPL
+
+- La simulation conserve une horloge unique en heures, avancée par `delta × speed / 3600`.
+- Les positions JPL journalières sont maintenant propagées par le delta orbital jusqu’au `simulationTime` courant; elles ne restent plus figées entre deux requêtes réseau.
+- Le rendu, le tracking caméra et les informations utilisent la même position dynamique pour les planètes et la Lune.
+- Le contrôle de vitesse expose uniquement `0.1x`, `1x`, `5x` et `10x`.
+
+## Correction sélection/focus des corps célestes
+
+- La sélection conserve uniquement l’identifiant du corps; `CameraController` lit sa position monde courante à chaque frame.
+- Caméra et `OrbitControls.target` suivent le même delta orbital, y compris pour le Soleil (position statique).
+- Aucun mesh n’est déplacé par le raycast et aucune coordonnée de surface ancienne n’est mémorisée.
+
+## Overlay frontières Earth
+
+- Ajout de `public/textures/earth-borders.png` comme overlay RGBA sur le mesh Earth existant.
+- Overlay synchronisé avec le même groupe de rotation, UV SphereGeometry et position monde.
+- `depthTest` actif, `depthWrite` désactivé, face avant uniquement, sans couche vectorielle rouge.
+- `earth.jpg`, caméra, tracking, orbital/JPL, sélection, éclairage et background inchangés.
+
+## Correction Camera Follow dynamique
+
+- `CameraController` conserve l'identifiant du corps mobile sélectionné et suit sa position monde courante.
+- Le delta de déplacement est appliqué simultanément à la caméra et à `OrbitControls.target`.
+- Le focus interpolé utilise la position courante, sans `focusPosition` mémorisée.
+- La désélection et le changement direct de corps réinitialisent proprement la référence de suivi.
+- Le Soleil reste statique et conserve son comportement de focus existant.
+
 ## V0 stable (commit d534dd3)
 
 - Solar System 3D avec Soleil, Mercure, Vénus, Terre, Mars, Jupiter, Saturne, Uranus, Neptune

@@ -1,122 +1,173 @@
-import { useMemo } from "react"
+import { useEffect, useMemo } from "react"
 import * as THREE from "three"
-import { geoLonLatToVector3 } from "./geoProjection.ts"
 import countriesData from "../../../data/processed/countries-adm0-globe.json"
+import {
+  buildGeoBorderPositions,
+  GEO_LOD_STYLE,
+  type CountriesAdm0Data,
+} from "./geoLod.ts"
 
-/**
- * Epsilon appliqué au rayon terrestre pour placer les frontières
- * très légèrement au-dessus de la surface, évitant le z-fighting
- * sans produire un décalage visible.
- *
- * 0.002 = 0.2 % au-dessus de la surface.
- */
-const GEOGRAPHIC_EPSILON = 0.002
-
-/**
- * Format réel du fichier data/processed/countries-adm0-globe.json :
- *
- *   {
- *     version: 1,
- *     level: "ADM0",
- *     detail: "globe",
- *     tolerance: 0.05,
- *     countries: [ { id, name, geometry } ]
- *   }
- *
- * Geometries :
- *   - Polygon      → coordinates: number[][][]   (liste d'anneaux de points [lon, lat])
- *   - MultiPolygon → coordinates: number[][][][] (liste de polygones, chacun liste d'anneaux)
- */
-type Ring = number[][]
-type PolygonCoordinates = number[][][]
-type MultiPolygonCoordinates = number[][][][]
-
-type CountryGeometry =
-  | { type: "Polygon"; coordinates: PolygonCoordinates }
-  | { type: "MultiPolygon"; coordinates: MultiPolygonCoordinates }
-
-interface CountryAdm0 {
-  id: string
-  name: string
-  geometry: CountryGeometry
-}
-
-export interface CountriesGlobeData {
-  version: number
-  level: string
-  detail: string
-  tolerance: number
-  countries: CountryAdm0[]
-}
+/** Alias historique conservé pour les consommateurs existants. */
+export type CountriesGlobeData = CountriesAdm0Data
 
 interface GeographicLayerProps {
   earthRadius: number
+  /** Dataset ADM0 déjà chargé (null/undefined → fallback vers le dataset globe statique historique). */
+  data?: CountriesAdm0Data | null
+  /** Niveau visuel : 1 = globe, 2 = pays détaillé. */
+  lodLevel?: 1 | 2
+  color?: string
+  opacity?: number
+  onCountrySelect?: (countryId: string) => void
 }
 
-/**
- * Rendu des frontières ADM0 (polygones et multi-polygones)
- * projetées directement sur la sphère terrestre.
- *
- * Architecture :
- *   EarthGroup
- *   ├── EarthMesh (sphere + texture)
- *   └── GeographicLayer (ce composant)
- *
- * Étant enfant du même groupe que le mesh terrestre, le layer
- * hérite naturellement de la rotation Y du groupe —aucun
- * correctif d'angle n'est nécessaire.
- *
- * Rendu : un seul `THREE.LineSegments` avec un `BufferGeometry`
- * fusionné pour toutes les frontières de tous les pays.
- */
-export function GeographicLayer({ earthRadius }: GeographicLayerProps) {
-  const geoRadius = earthRadius * (1 + GEOGRAPHIC_EPSILON)
+export function GeographicLayer({
+  earthRadius,
+  data,
+  lodLevel = 1,
+  color,
+  opacity,
+  onCountrySelect,
+}: GeographicLayerProps) {
+  const style = GEO_LOD_STYLE[lodLevel] ?? GEO_LOD_STYLE[1]
+  const fallbackData = data ?? (countriesData as unknown as CountriesAdm0Data)
 
   const geometry = useMemo(() => {
-    const positions: number[] = []
-    const data = countriesData as unknown as CountriesGlobeData
+    if (!fallbackData) return null
+    const { positions } = buildGeoBorderPositions(fallbackData, earthRadius)
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3))
+    return geo
+  }, [earthRadius, fallbackData])
 
-    for (const country of data.countries) {
-      const { type, coordinates } = country.geometry
+  const countryPickingMeshes = useMemo(() => {
+    if (!fallbackData || !onCountrySelect) return []
 
-      if (type === "Polygon") {
-        addPolygonRings(coordinates, positions, geoRadius)
-      } else {
-        for (const polygon of coordinates) {
-          addPolygonRings(polygon, positions, geoRadius)
-        }
+    return fallbackData.countries.map((country) => {
+      const triangles = buildCountryPickingTriangles(country, earthRadius)
+      if (!triangles.length) return null
+
+      const geo = new THREE.BufferGeometry()
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(triangles, 3))
+      return {
+        id: country.id,
+        geometry: geo,
+      }
+    }).filter(Boolean) as Array<{ id: string; geometry: THREE.BufferGeometry }>
+  }, [earthRadius, fallbackData, onCountrySelect])
+
+  useEffect(() => {
+    return () => {
+      geometry?.dispose()
+      for (const mesh of countryPickingMeshes) {
+        mesh.geometry.dispose()
       }
     }
+  }, [geometry, countryPickingMeshes])
 
-    const geo = new THREE.BufferGeometry()
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3))
-    return geo
-  }, [geoRadius])
+  if (!geometry) return null
 
   return (
-    <lineSegments geometry={geometry}>
-      <lineBasicMaterial
-        color="#ffffff"
-        transparent
-        opacity={0.5}
-        depthWrite={false}
-      />
-    </lineSegments>
+    <>
+      <lineSegments geometry={geometry} renderOrder={1} raycast={() => null}>
+        <lineBasicMaterial
+          color={color ?? style.color}
+          transparent
+          opacity={opacity ?? style.opacity}
+          depthTest
+          depthWrite={false}
+        />
+      </lineSegments>
+
+      {countryPickingMeshes.map(({ id, geometry: pickingGeometry }) => (
+        <mesh
+          key={id}
+          geometry={pickingGeometry}
+          renderOrder={2}
+          onPointerDown={(event) => {
+            event.stopPropagation()
+            if (onCountrySelect) {
+              onCountrySelect(id)
+            }
+          }}
+        >
+          <meshBasicMaterial
+            transparent
+            opacity={0}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      ))}
+    </>
   )
+}
+
+function buildCountryPickingTriangles(
+  country: { id: string; geometry: { type: string; coordinates: any[] } },
+  radius: number,
+): number[] {
+  const triangles: number[] = []
+  const polygons = country.geometry.type === "Polygon"
+    ? [country.geometry.coordinates]
+    : country.geometry.coordinates
+
+  const project = (lon: number, lat: number) => {
+    const phi = (90 - lat) * (Math.PI / 180)
+    const theta = (lon + 180) * (Math.PI / 180)
+    const x = -radius * Math.sin(phi) * Math.cos(theta)
+    const y = radius * Math.cos(phi)
+    const z = radius * Math.sin(phi) * Math.sin(theta)
+    return new THREE.Vector3(x, y, z)
+  }
+
+  for (const polygon of polygons) {
+    const rings = Array.isArray(polygon[0]) && Array.isArray(polygon[0][0]) ? polygon : [polygon]
+
+    for (const ring of rings) {
+      if (!ring.length || ring.length < 3) continue
+      const centroid = new THREE.Vector3()
+      for (const point of ring) {
+        const [lon, lat] = point
+        centroid.add(project(lon, lat))
+      }
+      centroid.divideScalar(ring.length)
+
+      for (let i = 1; i < ring.length - 1; i++) {
+        const a = ring[0]
+        const b = ring[i]
+        const c = ring[i + 1]
+
+        const va = project(a[0], a[1])
+        const vb = project(b[0], b[1])
+        const vc = project(c[0], c[1])
+
+        triangles.push(
+          va.x, va.y, va.z,
+          vb.x, vb.y, vb.z,
+          vc.x, vc.y, vc.z,
+
+          centroid.x, centroid.y, centroid.z,
+          va.x, va.y, va.z,
+          vb.x, vb.y, vb.z,
+        )
+      }
+    }
+  }
+
+  return triangles
 }
 
 /**
  * Ajoute les segments de ligne de chaque anneau (extérieur ou intérieur)
  * d'un polygone au tableau de positions.
  *
- * Chaque paire de points consécutifs produit 2 vertices
- * pour `THREE.LineSegments`.
- *
- * Les anneaux GeoJSON sont fermés (premier point == dernier point),
- * donc ring.length - 1 segments suffisent.
+ * Cette fonction est conservée pour compatibilité si d'autres modules
+ * utilisaient l'ancien utilitaire local ; le rendu actuel passe par
+ * `buildGeoBorderPositions()` de `geoLod.ts`.
  */
 function addPolygonRings(
-  rings: PolygonCoordinates,
+  rings: number[][][],
   positions: number[],
   radius: number,
 ): void {
@@ -125,8 +176,16 @@ function addPolygonRings(
 
   for (const ring of rings) {
     for (let i = 0; i < ring.length - 1; i++) {
-      geoLonLatToVector3(ring[i][0], ring[i][1], radius, v1)
-      geoLonLatToVector3(ring[i + 1][0], ring[i + 1][1], radius, v2)
+      const [lon1, lat1] = ring[i]
+      const [lon2, lat2] = ring[i + 1]
+      const x1 = radius * Math.cos((lat1 * Math.PI) / 180) * Math.cos((lon1 * Math.PI) / 180)
+      const y1 = radius * Math.sin((lat1 * Math.PI) / 180)
+      const z1 = radius * Math.cos((lat1 * Math.PI) / 180) * Math.sin((lon1 * Math.PI) / 180)
+      const x2 = radius * Math.cos((lat2 * Math.PI) / 180) * Math.cos((lon2 * Math.PI) / 180)
+      const y2 = radius * Math.sin((lat2 * Math.PI) / 180)
+      const z2 = radius * Math.cos((lat2 * Math.PI) / 180) * Math.sin((lon2 * Math.PI) / 180)
+      v1.set(x1, y1, z1)
+      v2.set(x2, y2, z2)
       positions.push(v1.x, v1.y, v1.z, v2.x, v2.y, v2.z)
     }
   }

@@ -1,6 +1,7 @@
 import fs from "node:fs"
 
 const INPUT = "data/processed/countries-adm0-test.json"
+const INPUT = "data/processed/countries-adm0-raw.json"
 const OUTPUT_DIR = "data/processed"
 
 const LEVELS = {

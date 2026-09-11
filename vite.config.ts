@@ -19,6 +19,7 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       tailwindcss(),
+      jplProxyPlugin(),
       figmaSiteConfiguration(siteConfiguration),
       figmaErrorOverlayReplay(),
       figmaReactRefreshBoundaryFallback(),
@@ -34,6 +35,36 @@ export default defineConfig(({ mode }) => {
       port: parseInt(process.env.PORT || '8443'),
       strictPort: true,
       watch: { ignored: ['**/.figma/**'] },
+      proxy: {
+        '/api/jpl': {
+          target: 'https://ssd.jpl.nasa.gov',
+          changeOrigin: true,
+          rewrite: (path) => {
+            const url = new URL(path, 'http://localhost')
+            const bodyId = url.searchParams.get('bodyId') ?? 'earth'
+            const date = (url.searchParams.get('date') ?? new Date().toISOString().slice(0, 10)).trim()
+            const id = getJplBodyId(bodyId)
+            if (!id) {
+              return '/api/horizons.api?format=json&COMMAND=INVALID'
+            }
+            const params = new URLSearchParams({
+              format: 'json',
+              COMMAND: `'${id}'`,
+              MAKE_EPHEM: 'YES',
+              EPHEM_TYPE: 'VECTORS',
+              CENTER: "'500@10'",
+              START_TIME: date,
+              STOP_TIME: date,
+              STEP_SIZE: '1h',
+              OUT_UNITS: 'AU-D',
+              REF_PLANE: 'ECLIPTIC',
+              REF_SYSTEM: 'ICRF',
+              VECT_TABLE: '2',
+            })
+            return `/api/horizons.api?${params.toString()}`
+          },
+        },
+      },
     },
     preview: {
       host: '0.0.0.0',
@@ -70,6 +101,156 @@ type FigmaSiteConfiguration = {
 }
 
 /** Applies /.figma/make/site.json to the generated document shell. */
+const JPL_BODY_IDS: Record<string, string> = {
+  earth: '399',
+  moon: '301',
+  mercury: '199',
+  venus: '299',
+  mars: '499',
+  jupiter: '599',
+  saturn: '699',
+  uranus: '799',
+  neptune: '899',
+}
+
+function getJplBodyId(bodyId: string): string | null {
+  return JPL_BODY_IDS[bodyId] ?? null
+}
+
+function jplProxyPlugin(): Plugin {
+  return {
+    name: 'jpl-proxy',
+    configureServer(server) {
+      server.middlewares.use('/api/jpl', async (req, res, next) => {
+        try {
+          const url = new URL(req.url ?? '/', 'http://localhost')
+          const bodyId = url.searchParams.get('bodyId') ?? 'earth'
+          const date = (url.searchParams.get('date') ?? new Date().toISOString().slice(0, 10)).trim()
+          const jplBodyId = getJplBodyId(bodyId)
+
+          if (!jplBodyId) {
+            res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
+            res.end(JSON.stringify({ error: `Unsupported body: ${bodyId}` }))
+            return
+          }
+
+          const params = new URLSearchParams({
+            format: 'json',
+            COMMAND: `'${jplBodyId}'`,
+            MAKE_EPHEM: 'YES',
+            EPHEM_TYPE: 'VECTORS',
+            CENTER: "'500@10'",
+            START_TIME: date,
+            STOP_TIME: date,
+            STEP_SIZE: '1h',
+            OUT_UNITS: 'AU-D',
+            REF_PLANE: 'ECLIPTIC',
+            REF_SYSTEM: 'ICRF',
+            VECT_TABLE: '2',
+          })
+
+          const response = await fetch(`https://ssd.jpl.nasa.gov/api/horizons.api?${params.toString()}`, {
+            headers: { Accept: 'application/json' },
+          })
+
+          if (!response.ok) {
+            const errorText = await response.text()
+            res.writeHead(response.status, { 'Content-Type': 'application/json; charset=utf-8' })
+            res.end(JSON.stringify({ error: errorText || 'JPL Horizons request failed' }))
+            return
+          }
+
+          const payload = await response.json()
+          const rows = Array.isArray(payload?.result) ? payload.result : []
+          const row = rows.find((entry: any) => entry && typeof entry === 'object' && (entry.x !== undefined || entry.data))
+
+          const toVector = (source: any): [number, number, number] => {
+            if (!source) return [0, 0, 0]
+            const arr = Array.isArray(source) ? source : source.data ?? [0, 0, 0]
+            const x = Number(Array.isArray(arr) ? arr[1] ?? arr[0] : source.x ?? 0)
+            const y = Number(Array.isArray(arr) ? arr[2] ?? 0 : source.y ?? 0)
+            const z = Number(Array.isArray(arr) ? arr[3] ?? 0 : source.z ?? 0)
+            return [x, y, z]
+          }
+
+          const result = Array.isArray(row?.data) && row.data.length > 0 ? row.data[0] : row
+          const position = toVector(result)
+          const velocity = Array.isArray(result) && result.length >= 7
+            ? [Number(result[4] ?? 0), Number(result[5] ?? 0), Number(result[6] ?? 0)]
+            : [0, 0, 0]
+
+          res.writeHead(200, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store',
+          })
+          res.end(JSON.stringify({
+            bodyId,
+            position,
+            velocity,
+            unit: 'AU',
+            referenceFrame: 'ICRF',
+            epoch: typeof result === 'object' ? result.epoch ?? result.datetime ?? date : date,
+          }))
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown proxy error'
+          res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ error: message }))
+        }
+      })
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use('/api/jpl', async (req, res, next) => {
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const bodyId = url.searchParams.get('bodyId') ?? 'earth'
+        const date = (url.searchParams.get('date') ?? new Date().toISOString().slice(0, 10)).trim()
+        const jplBodyId = getJplBodyId(bodyId)
+
+        if (!jplBodyId) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ error: `Unsupported body: ${bodyId}` }))
+          return
+        }
+
+        try {
+          const params = new URLSearchParams({
+            format: 'json',
+            COMMAND: `'${jplBodyId}'`,
+            MAKE_EPHEM: 'YES',
+            EPHEM_TYPE: 'VECTORS',
+            CENTER: "'500@10'",
+            START_TIME: date,
+            STOP_TIME: date,
+            STEP_SIZE: '1h',
+            OUT_UNITS: 'AU-D',
+            REF_PLANE: 'ECLIPTIC',
+            REF_SYSTEM: 'ICRF',
+            VECT_TABLE: '2',
+          })
+          const response = await fetch(`https://ssd.jpl.nasa.gov/api/horizons.api?${params.toString()}`, {
+            headers: { Accept: 'application/json' },
+          })
+          const payload = await response.json()
+          const rows = Array.isArray(payload?.result) ? payload.result : []
+          const row = rows.find((entry: any) => entry && typeof entry === 'object' && (entry.x !== undefined || entry.data))
+          const result = Array.isArray(row?.data) && row.data.length > 0 ? row.data[0] : row
+          const position = Array.isArray(result) && result.length >= 4
+            ? [Number(result[1]), Number(result[2]), Number(result[3])]
+            : [0, 0, 0]
+          const velocity = Array.isArray(result) && result.length >= 7
+            ? [Number(result[4]), Number(result[5]), Number(result[6])]
+            : [0, 0, 0]
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+          res.end(JSON.stringify({ bodyId, position, velocity, unit: 'AU', referenceFrame: 'ICRF', epoch: date }))
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown proxy error'
+          res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ error: message }))
+        }
+      })
+    },
+  }
+}
+
 function figmaSiteConfiguration(config: FigmaSiteConfiguration): Plugin {
   function sanitizeHtmlValue(value: string | undefined): string {
     return value?.replace(/[^a-zA-Z0-9_-]/g, '') || ''
