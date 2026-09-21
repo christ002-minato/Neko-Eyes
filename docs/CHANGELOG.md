@@ -2,6 +2,13 @@
 
 > Historique des étapes réellement réalisées — uniquement les modifications confirmées.
 
+## Fiabilisation sélection et temps initial
+
+- Les boutons `OBJECTS` déclenchent la sélection, le tracking et le focus caméra via le handler central.
+- Le double-clic 3D est détecté sur le hitbox par une fenêtre de 300 ms compatible avec `OrbitControls`.
+- L’horloge démarre sur l’instant système courant.
+- L’angle initial de rotation terrestre respecte le repère longitude de la projection géographique pour aligner le point subsolaire et le terminateur.
+
 ## Correction horloge globale et mouvement JPL
 
 - La simulation conserve une horloge unique en heures, avancée par `delta × speed / 3600`.

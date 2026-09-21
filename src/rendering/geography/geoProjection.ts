@@ -36,3 +36,33 @@ export function geoLonLatToVector3(
   )
   return v
 }
+
+/**
+ * Inverse de la projection : point 3D d'impact → (latitude, longitude).
+ *
+ * Convertit un point d'impact du Raycaster (repère monde) en coordonnées
+ * géographiques. La dé-rotation axiale −rotationY annule la rotation du groupe
+ * de la Terre (spin diurne) pour ramener le vecteur dans le repère fixe de la
+ * texture équirectangulaire (repère de geoLonLatToVector3).
+ *
+ * Le vecteur est normalisé : seule la direction compte, donc le rayon du maillage
+ * d'impact n'influence pas le résultat.
+ */
+const AXIS_Y = new THREE.Vector3(0, 1, 0)
+
+export function earthImpactToLatLon(
+  worldPoint: THREE.Vector3,
+  earthCenter: THREE.Vector3,
+  rotationY: number,
+): { latitude: number; longitude: number } | null {
+  const local = worldPoint.clone().sub(earthCenter)
+  local.applyAxisAngle(AXIS_Y, -rotationY)
+
+  const radius = local.length()
+  if (radius < 1e-10) return null
+
+  const latitude = Math.asin(THREE.MathUtils.clamp(local.y / radius, -1, 1)) * (180 / Math.PI)
+  const longitude = Math.atan2(-local.z, local.x) * (180 / Math.PI)
+
+  return { latitude, longitude }
+}

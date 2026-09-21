@@ -1,5 +1,5 @@
 import type { EphemerisState, SceneEphemerisState } from "./types.ts"
-import { simulationTimeToDateStr } from "../../time.ts"
+import { simulationTimeToDateStr, simulationTimeToDayId } from "../../time.ts"
 
 const JPL_BASE_URL = '/api/jpl'
 
@@ -96,7 +96,10 @@ export class JPLProvider {
   }
 
   async getState(bodyId: string, simulationTime: number): Promise<EphemerisState | null> {
-    const cached = this.cache.get(bodyId)
+    // Clé de cache incluant le jour simulé : une fois la journée UTC changée,
+    // l'état n'est plus servi au lieu de re-lancer la requête JPL.
+    const cacheKey = `${bodyId}:${simulationTimeToDayId(simulationTime)}`
+    const cached = this.cache.get(cacheKey)
     if (cached !== undefined) {
       return cached
     }
@@ -110,7 +113,7 @@ export class JPLProvider {
       return null
     }
 
-    const task = async () => {
+    const task = async (): Promise<EphemerisState | null> => {
       try {
         const date = simulationTimeToDateStr(simulationTime)
         const params = new URLSearchParams({
@@ -121,7 +124,10 @@ export class JPLProvider {
         this.abortController = new AbortController()
         const timeoutId = setTimeout(() => this.abortController?.abort(), this.defaultTimeout)
 
-        const response = await fetch(`${JPL_BASE_URL}?${params.toString()}`, {
+        const url = `${JPL_BASE_URL}?${params.toString()}`
+        console.log('[JPL-Debug] Tentative fetch pour:', bodyId, 'URL:', url)
+
+        const response = await fetch(url, {
           signal: this.abortController.signal,
           headers: { Accept: 'application/json' },
           cache: 'no-store',
@@ -130,6 +136,7 @@ export class JPLProvider {
         clearTimeout(timeoutId)
 
         if (!response.ok) {
+          console.error('[JPL-Debug] Échec API JPL (Status ' + response.status + '). Activation du fallback analytique.')
           this.degradedMode = true
           return null
         }
@@ -138,11 +145,12 @@ export class JPLProvider {
         const state = parseJPLResponse(data, bodyId)
 
         if (state) {
-          this.cache.set(bodyId, state)
+          this.cache.set(cacheKey, state)
         }
 
         return state
       } catch (error) {
+        console.error('[JPL-Debug] Erreur réseau JPL pour', bodyId, ':', error)
         if (!this.degradedMode) {
           this.degradedMode = true
         }
@@ -150,9 +158,10 @@ export class JPLProvider {
       }
     }
 
-    const previous = this.queue
-    this.queue = previous.then(task, task)
-    return await this.queue.then(() => task())
+    // File : une seule exécution de `task` par appel, chaînée sur le précédent.
+    const queued = this.queue.then(task, task)
+    this.queue = queued
+    return await queued
   }
 
   toSceneState(state: EphemerisState): SceneEphemerisState {

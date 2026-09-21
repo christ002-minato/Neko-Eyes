@@ -26,6 +26,15 @@ export function simulationTimeToDateMs(simulationTime: number): Date {
 }
 
 /**
+ * Convertit une date (horodatage système) en temps simulé (heures).
+ * Permet d'initialiser l'horloge simulée sur l'heure locale actuelle :
+ *   simTime = utcToSimulationTime(new Date())
+ */
+export function utcToSimulationTime(date: Date): number {
+  return (date.getTime() - SIMULATION_EPOCH_MS) / 3600000
+}
+
+/**
  * Renvoie la date UTC au format YYYY-MM-DD (pour JPL Horizons, granularité jour).
  */
 export function simulationTimeToDateStr(simulationTime: number): string {

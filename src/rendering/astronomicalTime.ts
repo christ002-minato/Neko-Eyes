@@ -123,7 +123,7 @@ export function calculateInitialEarthRotationAngle(earthPositionAtEpoch: [number
   while (subsolarLonDeg <= -180) subsolarLonDeg += 360
 
   const subsolarLonRad = (subsolarLonDeg / 180) * Math.PI
-  const initialAngle = sunDirAngle - subsolarLonRad
+  const initialAngle = -subsolarLonRad - sunDirAngle
 
   return initialAngle
 }

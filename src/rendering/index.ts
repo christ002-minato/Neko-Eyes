@@ -35,6 +35,7 @@ export * from "./astronomicalTime.ts"
 export {
   GeographicLayer,
   geoLonLatToVector3,
+  earthImpactToLatLon,
   runGeoProjectionSelftest,
   EarthGeoLodMonitor,
   useEarthGeoLodDatasets,

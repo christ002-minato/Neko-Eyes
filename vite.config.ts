@@ -1,9 +1,9 @@
-import { defineConfig, type HtmlTagDescriptor, type Plugin } from 'vite'
+import { defineConfig, type Connect, type HtmlTagDescriptor, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
 
-import siteConfiguration from './.figma/make/site.json'
+import site from "./.figma/make/site.json" with { type: "json" };
 
 // Vite config — https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
@@ -20,14 +20,14 @@ export default defineConfig(({ mode }) => {
       react(),
       tailwindcss(),
       jplProxyPlugin(),
-      figmaSiteConfiguration(siteConfiguration),
+      figmaSiteConfiguration(site),
       figmaErrorOverlayReplay(),
       figmaReactRefreshBoundaryFallback(),
       figmaMakeKitPlugin({ storiesGlob: '/src/**/*.stories.{ts,tsx,js,jsx}' }),
     ],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, './src'),
+        '@': path.resolve(import.meta.dirname, './src'),
       },
     },
     server: {
@@ -35,36 +35,6 @@ export default defineConfig(({ mode }) => {
       port: parseInt(process.env.PORT || '8443'),
       strictPort: true,
       watch: { ignored: ['**/.figma/**'] },
-      proxy: {
-        '/api/jpl': {
-          target: 'https://ssd.jpl.nasa.gov',
-          changeOrigin: true,
-          rewrite: (path) => {
-            const url = new URL(path, 'http://localhost')
-            const bodyId = url.searchParams.get('bodyId') ?? 'earth'
-            const date = (url.searchParams.get('date') ?? new Date().toISOString().slice(0, 10)).trim()
-            const id = getJplBodyId(bodyId)
-            if (!id) {
-              return '/api/horizons.api?format=json&COMMAND=INVALID'
-            }
-            const params = new URLSearchParams({
-              format: 'json',
-              COMMAND: `'${id}'`,
-              MAKE_EPHEM: 'YES',
-              EPHEM_TYPE: 'VECTORS',
-              CENTER: "'500@10'",
-              START_TIME: date,
-              STOP_TIME: date,
-              STEP_SIZE: '1h',
-              OUT_UNITS: 'AU-D',
-              REF_PLANE: 'ECLIPTIC',
-              REF_SYSTEM: 'ICRF',
-              VECT_TABLE: '2',
-            })
-            return `/api/horizons.api?${params.toString()}`
-          },
-        },
-      },
     },
     preview: {
       host: '0.0.0.0',
@@ -117,136 +87,181 @@ function getJplBodyId(bodyId: string): string | null {
   return JPL_BODY_IDS[bodyId] ?? null
 }
 
+const JPL_HORIZONS_URL = 'https://ssd.jpl.nasa.gov/api/horizons.api'
+
+/**
+ * Parse the JPL Horizons JSON response. The `result` field is a **text string**
+ * containing the full Horizons output with vector data between $$SOE / $$EOE markers.
+ *
+ * Expected $$SOE block format (VEC_TABLE=2, OUT_UNITS=AU-D):
+ * ```
+ * 2461297.500000000 = A.D. 2026-Sep-14 00:00:00.0000 TDB
+ *  X = 9.9325...E-01 Y =-1.6013...E-01 Z = 6.0701...E-06
+ *  VX= 2.4569...E-03 VY= 1.6927...E-02 VZ=-6.5247...E-07
+ * ```
+ */
+function parseHorizonsResult(
+  resultText: string,
+  bodyId: string,
+  fallbackDate: string,
+): { position: [number, number, number]; velocity: [number, number, number]; epoch: string } | null {
+  try {
+    const soeIdx = resultText.indexOf('$$SOE')
+    const eoeIdx = resultText.indexOf('$$EOE')
+    if (soeIdx < 0 || eoeIdx < 0 || eoeIdx <= soeIdx) return null
+
+    const block = resultText.slice(soeIdx + 5, eoeIdx)
+
+    const posRegex = /X\s*=\s*([+\-]?\d[\d.E+\-]*)\s+Y\s*=\s*([+\-]?\d[\d.E+\-]*)\s+Z\s*=\s*([+\-]?\d[\d.E+\-]*)/
+    const velRegex = /VX\s*=\s*([+\-]?\d[\d.E+\-]*)\s+VY\s*=\s*([+\-]?\d[\d.E+\-]*)\s+VZ\s*=\s*([+\-]?\d[\d.E+\-]*)/
+
+    const posMatch = block.match(posRegex)
+    const velMatch = block.match(velRegex)
+    if (!posMatch) return null
+
+    const position: [number, number, number] = [
+      Number(posMatch[1]),
+      Number(posMatch[2]),
+      Number(posMatch[3]),
+    ]
+    if (position.some(Number.isNaN)) return null
+
+    const velocity: [number, number, number] = velMatch
+      ? [Number(velMatch[1]), Number(velMatch[2]), Number(velMatch[3])]
+      : [0, 0, 0]
+
+    const dateMatch = block.match(
+      /A\.D\.\s+(\d{4}-\w{3}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+)\s+TDB/,
+    )
+    const epoch = dateMatch ? dateMatch[1] : fallbackDate
+
+    return { position, velocity, epoch }
+  } catch {
+    return null
+  }
+}
+
+function buildHorizonsUrl(jplBodyId: string, startDate: string, endDate: string): string {
+  // CENTER : héliocentrique (Soleil) pour les planètes ; géocentrique (Terre)
+  // pour la Lune, afin que le vecteur renvoyé soit Terre → Lune (offset géocentrique).
+  const center = jplBodyId === '301' ? "'500@399'" : "'500@10'"
+  const qs = [
+    'format=json',
+    `COMMAND=${encodeURIComponent(`'${jplBodyId}'`)}`,
+    `MAKE_EPHEM=${encodeURIComponent("'YES'")}`,
+    `EPHEM_TYPE=${encodeURIComponent("'VECTORS'")}`,
+    `CENTER=${encodeURIComponent(center)}`,
+    `START_TIME=${encodeURIComponent(`'${startDate}'`)}`,
+    `STOP_TIME=${encodeURIComponent(`'${endDate}'`)}`,
+    `STEP_SIZE=${encodeURIComponent("'1 h'")}`,
+    `OUT_UNITS=${encodeURIComponent("'AU-D'")}`,
+    `REF_PLANE=${encodeURIComponent("'ECLIPTIC'")}`,
+    `REF_SYSTEM=${encodeURIComponent("'ICRF'")}`,
+    'VEC_TABLE=2',
+    'OBJ_DATA=NO',
+  ]
+  return `${JPL_HORIZONS_URL}?${qs.join('&')}`
+}
+
+function createJplProxyHandler(): Connect.NextHandleFunction {
+  return async (req, res, next) => {
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const bodyId = url.searchParams.get('bodyId') ?? 'earth'
+    const date = (url.searchParams.get('date') ?? new Date().toISOString().slice(0, 10)).trim()
+    const jplBodyId = getJplBodyId(bodyId)
+
+    if (!jplBodyId) {
+      res.writeHead(400, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+      })
+      res.end(JSON.stringify({ error: `Unsupported body: ${bodyId}` }))
+      return
+    }
+
+    try {
+      const endDate = `${date} 01:00`
+      const apiUrl = buildHorizonsUrl(jplBodyId, date, endDate)
+
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 15000)
+
+      let response: Response
+      try {
+        response = await fetch(apiUrl, {
+          signal: controller.signal,
+          headers: { Accept: 'application/json' },
+        })
+      } finally {
+        clearTimeout(timeout)
+      }
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '')
+        res.writeHead(502, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+        })
+        res.end(JSON.stringify({ error: errorText || `JPL Horizons HTTP ${response.status}` }))
+        return
+      }
+
+      const payload = await response.json()
+
+      if (payload.error) {
+        res.writeHead(502, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+        })
+        res.end(JSON.stringify({ error: payload.error }))
+        return
+      }
+
+      const resultText = typeof payload.result === 'string' ? payload.result : ''
+      const parsed = parseHorizonsResult(resultText, bodyId, date)
+
+      if (!parsed) {
+        res.writeHead(502, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+        })
+        res.end(JSON.stringify({ error: 'Failed to parse Horizons vector data' }))
+        return
+      }
+
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*',
+      })
+      res.end(JSON.stringify({
+        bodyId,
+        position: parsed.position,
+        velocity: parsed.velocity,
+        unit: 'AU',
+        referenceFrame: 'ICRF',
+        epoch: parsed.epoch,
+      }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown proxy error'
+      res.writeHead(502, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+      })
+      res.end(JSON.stringify({ error: message }))
+    }
+  }
+}
+
 function jplProxyPlugin(): Plugin {
+  const handler = createJplProxyHandler()
   return {
     name: 'jpl-proxy',
     configureServer(server) {
-      server.middlewares.use('/api/jpl', async (req, res, next) => {
-        try {
-          const url = new URL(req.url ?? '/', 'http://localhost')
-          const bodyId = url.searchParams.get('bodyId') ?? 'earth'
-          const date = (url.searchParams.get('date') ?? new Date().toISOString().slice(0, 10)).trim()
-          const jplBodyId = getJplBodyId(bodyId)
-
-          if (!jplBodyId) {
-            res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
-            res.end(JSON.stringify({ error: `Unsupported body: ${bodyId}` }))
-            return
-          }
-
-          const params = new URLSearchParams({
-            format: 'json',
-            COMMAND: `'${jplBodyId}'`,
-            MAKE_EPHEM: 'YES',
-            EPHEM_TYPE: 'VECTORS',
-            CENTER: "'500@10'",
-            START_TIME: date,
-            STOP_TIME: date,
-            STEP_SIZE: '1h',
-            OUT_UNITS: 'AU-D',
-            REF_PLANE: 'ECLIPTIC',
-            REF_SYSTEM: 'ICRF',
-            VECT_TABLE: '2',
-          })
-
-          const response = await fetch(`https://ssd.jpl.nasa.gov/api/horizons.api?${params.toString()}`, {
-            headers: { Accept: 'application/json' },
-          })
-
-          if (!response.ok) {
-            const errorText = await response.text()
-            res.writeHead(response.status, { 'Content-Type': 'application/json; charset=utf-8' })
-            res.end(JSON.stringify({ error: errorText || 'JPL Horizons request failed' }))
-            return
-          }
-
-          const payload = await response.json()
-          const rows = Array.isArray(payload?.result) ? payload.result : []
-          const row = rows.find((entry: any) => entry && typeof entry === 'object' && (entry.x !== undefined || entry.data))
-
-          const toVector = (source: any): [number, number, number] => {
-            if (!source) return [0, 0, 0]
-            const arr = Array.isArray(source) ? source : source.data ?? [0, 0, 0]
-            const x = Number(Array.isArray(arr) ? arr[1] ?? arr[0] : source.x ?? 0)
-            const y = Number(Array.isArray(arr) ? arr[2] ?? 0 : source.y ?? 0)
-            const z = Number(Array.isArray(arr) ? arr[3] ?? 0 : source.z ?? 0)
-            return [x, y, z]
-          }
-
-          const result = Array.isArray(row?.data) && row.data.length > 0 ? row.data[0] : row
-          const position = toVector(result)
-          const velocity = Array.isArray(result) && result.length >= 7
-            ? [Number(result[4] ?? 0), Number(result[5] ?? 0), Number(result[6] ?? 0)]
-            : [0, 0, 0]
-
-          res.writeHead(200, {
-            'Content-Type': 'application/json; charset=utf-8',
-            'Cache-Control': 'no-store',
-          })
-          res.end(JSON.stringify({
-            bodyId,
-            position,
-            velocity,
-            unit: 'AU',
-            referenceFrame: 'ICRF',
-            epoch: typeof result === 'object' ? result.epoch ?? result.datetime ?? date : date,
-          }))
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Unknown proxy error'
-          res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' })
-          res.end(JSON.stringify({ error: message }))
-        }
-      })
+      server.middlewares.use('/api/jpl', handler)
     },
     configurePreviewServer(server) {
-      server.middlewares.use('/api/jpl', async (req, res, next) => {
-        const url = new URL(req.url ?? '/', 'http://localhost')
-        const bodyId = url.searchParams.get('bodyId') ?? 'earth'
-        const date = (url.searchParams.get('date') ?? new Date().toISOString().slice(0, 10)).trim()
-        const jplBodyId = getJplBodyId(bodyId)
-
-        if (!jplBodyId) {
-          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
-          res.end(JSON.stringify({ error: `Unsupported body: ${bodyId}` }))
-          return
-        }
-
-        try {
-          const params = new URLSearchParams({
-            format: 'json',
-            COMMAND: `'${jplBodyId}'`,
-            MAKE_EPHEM: 'YES',
-            EPHEM_TYPE: 'VECTORS',
-            CENTER: "'500@10'",
-            START_TIME: date,
-            STOP_TIME: date,
-            STEP_SIZE: '1h',
-            OUT_UNITS: 'AU-D',
-            REF_PLANE: 'ECLIPTIC',
-            REF_SYSTEM: 'ICRF',
-            VECT_TABLE: '2',
-          })
-          const response = await fetch(`https://ssd.jpl.nasa.gov/api/horizons.api?${params.toString()}`, {
-            headers: { Accept: 'application/json' },
-          })
-          const payload = await response.json()
-          const rows = Array.isArray(payload?.result) ? payload.result : []
-          const row = rows.find((entry: any) => entry && typeof entry === 'object' && (entry.x !== undefined || entry.data))
-          const result = Array.isArray(row?.data) && row.data.length > 0 ? row.data[0] : row
-          const position = Array.isArray(result) && result.length >= 4
-            ? [Number(result[1]), Number(result[2]), Number(result[3])]
-            : [0, 0, 0]
-          const velocity = Array.isArray(result) && result.length >= 7
-            ? [Number(result[4]), Number(result[5]), Number(result[6])]
-            : [0, 0, 0]
-          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
-          res.end(JSON.stringify({ bodyId, position, velocity, unit: 'AU', referenceFrame: 'ICRF', epoch: date }))
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Unknown proxy error'
-          res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' })
-          res.end(JSON.stringify({ error: message }))
-        }
-      })
+      server.middlewares.use('/api/jpl', handler)
     },
   }
 }

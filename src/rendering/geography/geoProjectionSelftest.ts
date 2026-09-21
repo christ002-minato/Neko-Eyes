@@ -1,5 +1,5 @@
 import * as THREE from "three"
-import { geoLonLatToVector3 } from "./geoProjection.ts"
+import { geoLonLatToVector3, earthImpactToLatLon } from "./geoProjection.ts"
 
 /**
  * Self-test for geoLonLatToVector3 projection.
@@ -113,6 +113,44 @@ export function runGeoProjectionSelftest(): void {
   if (Math.abs(rotated.length() - radius) > tolerance) {
     throw new Error(
       `[geoProjection] Rotation solidarity: rotated length ${rotated.length()} != radius ${radius}`,
+    )
+  }
+
+  // earthImpactToLatLon must be the exact inverse of geoLonLatToVector3
+  // (repartage de longitude/latitude, avec et sans dé-rotation axiale).
+  const center = new THREE.Vector3(0, 0, 0)
+  const testCoords: Array<{ lon: number; lat: number }> = [
+    { lon: 0, lat: 0 },
+    { lon: -96, lat: 39 },
+    { lon: 138, lat: 36 },
+    { lon: -5.5, lat: 7.5 },
+    { lon: 90, lat: -33 },
+  ]
+  for (const coord of testCoords) {
+    const v = geoLonLatToVector3(coord.lon, coord.lat, radius)
+    const back = earthImpactToLatLon(v, center, 0)
+    if (!back) {
+      throw new Error(`[geoProjection] earthImpactToLatLon returned null for (${coord.lon}, ${coord.lat})`)
+    }
+    if (Math.abs(back.latitude - coord.lat) > 1e-6 || Math.abs(back.longitude - coord.lon) > 1e-6) {
+      throw new Error(
+        `[geoProjection] Round-trip (${coord.lon}, ${coord.lat}) → (${back.longitude}, ${back.latitude})`,
+      )
+    }
+  }
+
+  // Dé-rotation : avec un spin Y non nul, le point d'impact doit être ramené
+  // aux mêmes coordonnées que s'il était vu dans le repère de la texture.
+  const spin = Math.PI / 3
+  const spun = p.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), spin)
+  const backSpun = earthImpactToLatLon(spun, center, spin)
+  if (
+    !backSpun ||
+    Math.abs(backSpun.latitude - 0) > 1e-6 ||
+    Math.abs(backSpun.longitude - 45) > 1e-6
+  ) {
+    throw new Error(
+      `[geoProjection] earthImpactToLatLon de-rotation failed: got (${backSpun?.longitude}, ${backSpun?.latitude})`,
     )
   }
 }

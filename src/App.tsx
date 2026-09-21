@@ -24,6 +24,7 @@ import {
   simulationTimeToUTC,
   calculateSubsolarPoint,
   GeographicLayer,
+  earthImpactToLatLon,
   runGeoProjectionSelftest,
   EarthGeoLodMonitor,
   useEarthGeoLodDatasets,
@@ -31,10 +32,7 @@ import {
   type CountriesAdm0Data,
 } from "@/rendering"
 import { useAstroModel } from "@/rendering/models"
-import { SIMULATION_EPOCH_MS, simulationTimeToDayId, formatLocalTime, formatUTCTime } from "@/time"
-
-
-// ── Types ─────────────────────────────────────────────────────────────────────
+import { simulationTimeToDayId, formatLocalTime, formatUTCTime, utcToSimulationTime } from "@/time"
 
 interface Planet {
   id: string
@@ -292,54 +290,24 @@ function getMoonOffset(time: number): [number, number, number] {
   ], true)
 }
 
-function getMoonOrbitalOffset(time: number): [number, number, number] {
-  const moon = ORBITAL_BODY_BY_ID.get('moon')
-  const earth = ORBITAL_BODY_BY_ID.get('earth')
-  if (!moon || !earth) return [0, 0, 0]
-  const moonPosition = getBodyPosition(moon, time)
-  const earthPosition = getBodyPosition(earth, time)
-  return [
-    moonPosition[0] - earthPosition[0],
-    moonPosition[1] - earthPosition[1],
-    moonPosition[2] - earthPosition[2],
-  ]
-}
-
-function getSimulationDayStartTime(simulationTime: number): number {
-  const dayId = simulationTimeToDayId(simulationTime)
-  return (dayId * 86400000 - SIMULATION_EPOCH_MS) / 3600000
-}
-
-function getDynamicJplPosition(
+// Projection des vecteurs JPL sur les trajectoires dessinées (App. orbitTrajectory).
+// Les anneaux de Neko Eyes sont des cercles plats dans le plan XZ (Y = 0), de rayon
+// visuel orbitRadius. Les vecteurs JPL (héliocentriques ou géocentriques, plan de
+// l'écliptique XY) sont donc :
+//   1. réalignés sur ce plan : scene.X = jpl.X ; scene.Y = 0 ; scene.Z = jpl.Y ;
+//   2. normalisés à l'échelle : |JPL| varie chaque jour réel (excentricité, Lune),
+//      on force donc la distance scène = orbitRadius pour que la planète reste
+//      STRICTEMENT sur son anneau, comme en V0.
+function convertJplToScenePosition(
+  jpl: [number, number, number],
   bodyId: string,
-  jplPosition: [number, number, number],
-  simulationTime: number,
 ): [number, number, number] {
   const body = ORBITAL_BODY_BY_ID.get(bodyId)
-  if (!body) return jplPosition
-
-  const anchorTime = getSimulationDayStartTime(simulationTime)
-  const currentPosition = getBodyPosition(body, simulationTime)
-  const anchorPosition = getBodyPosition(body, anchorTime)
-  return [
-    jplPosition[0] + currentPosition[0] - anchorPosition[0],
-    jplPosition[1] + currentPosition[1] - anchorPosition[1],
-    jplPosition[2] + currentPosition[2] - anchorPosition[2],
-  ]
-}
-
-function getDynamicJplMoonOffset(
-  jplPosition: [number, number, number],
-  simulationTime: number,
-): [number, number, number] {
-  const anchorTime = getSimulationDayStartTime(simulationTime)
-  const currentOffset = getMoonOrbitalOffset(simulationTime)
-  const anchorOffset = getMoonOrbitalOffset(anchorTime)
-  return [
-    jplPosition[0] + currentOffset[0] - anchorOffset[0],
-    jplPosition[1] + currentOffset[1] - anchorOffset[1],
-    jplPosition[2] + currentOffset[2] - anchorOffset[2],
-  ]
+  const orbitalRadius = body?.orbitalRadius ?? 0
+  const magnitude = Math.hypot(jpl[0], jpl[1], jpl[2])
+  if (magnitude === 0) return [0, 0, 0]
+  const scale = orbitalRadius / magnitude
+  return [jpl[0] * scale, 0, jpl[1] * scale]
 }
 
 // ── 3D Scene Components ───────────────────────────────────────────────────────
@@ -351,6 +319,20 @@ function getBodyVisualRadius(bodyId: string): number {
   return mapBodySizeToVisual(1)
 }
 
+// [Zoom-Debug] Trace au moment du clic : point d'impact 3D (hitbox), cible
+// OrbitControls et position caméra, pour vérifier la géométrie du zoom.
+// Diagnostic uniquement — aucun effet fonctionnel.
+function logZoomClick(
+  label: string,
+  point: THREE.Vector3,
+  eventCamera: { position: THREE.Vector3 } | undefined,
+): void {
+  const diag = (globalThis as any).__diag?.state
+  console.log(`[Zoom-Debug] Clic ${label} — Impact 3D (intersection.point):`, point)
+  console.log('[Zoom-Debug] Target actuel:', diag?.target ?? '(n/a)')
+  console.log('[Zoom-Debug] Position Caméra actuelle:', eventCamera?.position.clone() ?? '(n/a)')
+}
+
 function CameraController({
   focusTarget,
   trackingTarget,
@@ -358,6 +340,8 @@ function CameraController({
   isFocusing,
   onTransitionDone,
   controlsRef,
+  targetFocusDistance,
+  meshRegistry,
   earthPosition,
 }: {
   focusTarget: string | null
@@ -366,6 +350,8 @@ function CameraController({
   isFocusing: boolean
   onTransitionDone: () => void
   controlsRef: React.RefObject<any>
+  targetFocusDistance: number | null
+  meshRegistry: React.RefObject<Record<string, THREE.Object3D | null>>
   earthPosition: [number, number, number] | null
 }) {
   const { camera } = useThree()
@@ -377,12 +363,18 @@ function CameraController({
   const previousTrackingTarget = useRef<string | null>(null)
   const minDistanceSet = useRef(false)
   const prevFocusTarget = useRef<string | null>(null)
+  const prevTargetFocusDistance = useRef<number | null>(null)
+  const aimTargetRef = useRef(new THREE.Vector3())
+  const trackDeltaRef = useRef(new THREE.Vector3())
   const earthWorldPos = useRef(new THREE.Vector3())
   const earthMinRaised = useRef(false)
   const preEarthMin = useRef(0.05)
+  const lerpSpeed = 6.0
+  const zoomDebugFrames = useRef(0)
+  const zoomPrevDist = useRef<number | null>(null)
 
   // TEMP-DIAG: expose camera state for headless repro
-  const diagRef = useRef({ frames: 0, focusDone: false, tele: [] as any[] })
+  const diagRef = useRef({ frames: 0, focusDone: false, lastTrackDeltaMag: 0, tele: [] as any[] })
   ;(globalThis as any).__diag = {
     get state() {
       return {
@@ -390,11 +382,31 @@ function CameraController({
         isFocusing,
         focusTarget,
         trackingTarget,
+        targetFocusDistance,
         cam: camera.position.toArray().map(v => +v.toFixed(2)),
         target: controlsRef.current ? controlsRef.current.target.toArray().map((v: number) => +v.toFixed(2)) : null,
         distToTarget: controlsRef.current ? +(camera.position.distanceTo(controlsRef.current.target).toFixed(2)) : null,
+        meshWorldPos: (() => {
+          const id = trackingTarget ?? focusTarget
+          const obj = id ? meshRegistry.current[id] : undefined
+          if (!obj) return null
+          const v = new THREE.Vector3()
+          obj.getWorldPosition(v)
+          return v.toArray().map(n => +n.toFixed(2))
+        })(),
+        targetToMeshRatio: (() => {
+          const id = trackingTarget ?? focusTarget
+          const obj = id ? meshRegistry.current[id] : undefined
+          if (!obj || !controlsRef.current) return null
+          const v = new THREE.Vector3()
+          obj.getWorldPosition(v)
+          return +(controlsRef.current.target.distanceTo(v).toFixed(3))
+        })(),
         focusDone: diagRef.current.focusDone,
         currentFocus,
+        prevTrackPos: previousTrackedPosition.current.toArray().map(v => +v.toFixed(2)),
+        aim: aimTargetRef.current.toArray().map(v => +v.toFixed(2)),
+        lastTrackDeltaMag: diagRef.current.lastTrackDeltaMag,
         lerp: +lerpProgress.current.toFixed(3),
         minDist: controlsRef.current ? controlsRef.current.minDistance : null,
         minDistSet: minDistanceSet.current,
@@ -404,9 +416,15 @@ function CameraController({
     },
   }
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     if (!controlsRef.current) return
     const controls = controlsRef.current
+
+    // Disable OrbitControls during camera focus animation to prevent it from
+    // overriding the target/position set by CameraController (which runs before
+    // OrbitControls in the render tree). Without this, OrbitControls' internal
+    // damping fights the lerp and the camera never converges.
+    controls.enabled = !isFocusing
 
     if (earthPosition) {
       earthWorldPos.current.set(earthPosition[0], earthPosition[1], earthPosition[2])
@@ -420,21 +438,51 @@ function CameraController({
       prevFocusTarget.current = focusTarget
     }
 
+    if (targetFocusDistance !== null && targetFocusDistance !== prevTargetFocusDistance.current) {
+      prevTargetFocusDistance.current = targetFocusDistance
+      if (focusTarget && isFocusing) {
+        lerpProgress.current = 0
+        minDistanceSet.current = false
+        currentFocus.current = focusTarget
+        prevCameraPos.current.copy(camera.position)
+        prevControlsTarget.current.copy(controls.target)
+      }
+    }
+
+    // Position mondiale RÉELLE du corps suivi / focalisé : on lit directement le
+    // mesh Three.js rendu (getWorldPosition) — jamais une position recalculée —
+    // pour que le point visé coïncide exactement avec la planète visible, quelle
+    // que soit la source (Kepler analytique, JPL…). Repli temporaire sur
+    // trackedPosition tant que le mesh n'est pas encore enregistré.
+    const targetId = trackingTarget ?? focusTarget
+    const targetObj = targetId ? meshRegistry.current[targetId] : undefined
+    const aimTarget = aimTargetRef.current
+    if (targetObj) {
+      targetObj.updateWorldMatrix(true, false)
+      targetObj.getWorldPosition(aimTarget)
+    } else if (trackedPosition) {
+      aimTarget.set(...trackedPosition)
+    }
+    const hasAim = !!targetObj || !!trackedPosition
+
     if (trackingTarget !== previousTrackingTarget.current) {
       previousTrackingTarget.current = trackingTarget
-      if (trackingTarget && trackedPosition) {
-        previousTrackedPosition.current.set(...trackedPosition)
+      if (trackingTarget) {
+        previousTrackedPosition.current.copy(aimTarget)
       }
-    } else if (trackingTarget && trackedPosition) {
-      const currentPosition = new THREE.Vector3(...trackedPosition)
-      const delta = currentPosition.clone().sub(previousTrackedPosition.current)
-      camera.position.add(delta)
-      controls.target.add(delta)
-      if (isFocusing && currentFocus.current === focusTarget) {
-        prevCameraPos.current.add(delta)
-        prevControlsTarget.current.add(delta)
+    } else if (trackingTarget && hasAim) {
+      const positionDelta = trackDeltaRef.current.subVectors(aimTarget, previousTrackedPosition.current)
+      diagRef.current.lastTrackDeltaMag = +positionDelta.length().toFixed(3)
+      if (positionDelta.lengthSq() > 1e-12) {
+        camera.position.add(positionDelta)
+        controls.target.add(positionDelta)
+        controls.update()
+        if (isFocusing && currentFocus.current === focusTarget) {
+          prevCameraPos.current.add(positionDelta)
+          prevControlsTarget.current.add(positionDelta)
+        }
       }
-      previousTrackedPosition.current.copy(currentPosition)
+      previousTrackedPosition.current.copy(aimTarget)
     }
 
     if (!isFocusing && earthPosition) {
@@ -453,7 +501,7 @@ function CameraController({
       }
     }
 
-    if (isFocusing && trackedPosition && focusTarget) {
+    if (isFocusing && hasAim && focusTarget) {
       if (currentFocus.current !== focusTarget) {
         currentFocus.current = focusTarget
         lerpProgress.current = 0
@@ -462,25 +510,47 @@ function CameraController({
         prevControlsTarget.current.copy(controls.target)
       }
 
-      lerpProgress.current = Math.min(lerpProgress.current + 0.018, 1)
-      const t = lerpProgress.current * lerpProgress.current * (3 - 2 * lerpProgress.current)
+      // Cible verrouillée sur le CENTRE mondial de la planète sélectionnée,
+      // conformément au schéma : target = centre monde + offset sphérique.
+      // (Le point d'impact du clic sert à la sélection/surface, jamais de cible.)
+      const focusDistance = targetFocusDistance ?? (getBodyVisualRadius(focusTarget) * 3.5)
 
-      const bodyRadius = getBodyVisualRadius(focusTarget)
-      const focusDistance = bodyRadius * 3.5
-      const focusHeight = bodyRadius * 2.0
-      const currentPosition = new THREE.Vector3(...trackedPosition)
-      const targetPos = new THREE.Vector3(
-        currentPosition.x + focusDistance,
-        currentPosition.y + focusHeight,
-        currentPosition.z + focusDistance,
-      )
-      camera.position.lerpVectors(prevCameraPos.current, targetPos, t)
-      const lookTarget = currentPosition
-      controls.target.lerpVectors(prevControlsTarget.current, lookTarget, t)
+      // Interpolation exponentielle (indépendante du framerate) vers la cible.
+      const blend = Math.min(1, 1 - Math.exp(-lerpSpeed * delta))
+
+      // 1) Glisse le point de visée OrbitControls vers le point cliqué.
+      controls.target.lerp(aimTarget, blend)
+
+      // 2) Réduit progressivement la distance de l'offset sphérique tout en
+      //    conservant l'azimut / l'élévation choisis par l'utilisateur.
+      //    camera = controls.target + direction(actuelle) * radius_lerp
+      camera.position.sub(controls.target)
+      const currentDist = camera.position.length()
+      camera.position.normalize().multiplyScalar(currentDist + (focusDistance - currentDist) * blend)
+      camera.position.add(controls.target)
       controls.update()
 
-if (lerpProgress.current >= 1 && !minDistanceSet.current) {
-        controls.minDistance = bodyRadius * 1.05
+      // [Zoom-Debug] Pendant l'interpolation : distance caméra → cible,
+      // throttlée (1 log / 8 frames) avec tendance (diminution = zoom avant).
+      zoomDebugFrames.current += 1
+      if (zoomDebugFrames.current % 8 === 0) {
+        const dist = camera.position.distanceTo(controls.target)
+        let trend = ''
+        if (zoomPrevDist.current !== null) {
+          if (dist > zoomPrevDist.current + 0.0001) trend = ' (augmente — recul/décalage ⚠)'
+          else if (dist < zoomPrevDist.current - 0.0001) trend = ' (diminue — rapprochement ✓)'
+          else trend = ' (stable)'
+        }
+        zoomPrevDist.current = dist
+        console.log(`[Zoom-Debug] dist cam→cible ${focusTarget}:`, +dist.toFixed(3), trend)
+      }
+
+      lerpProgress.current = Math.min(lerpProgress.current + 0.018, 1)
+
+      const reachedTarget = controls.target.distanceTo(aimTarget) < 0.01
+      const reachedRadius = Math.abs(camera.position.distanceTo(controls.target) - focusDistance) < 0.05
+      if (reachedTarget && reachedRadius && !minDistanceSet.current) {
+        controls.minDistance = getBodyVisualRadius(focusTarget) * 1.05
         controls.maxDistance = Math.max(controls.maxDistance, focusDistance * 4)
         minDistanceSet.current = true
         currentFocus.current = null
@@ -521,14 +591,25 @@ function Sun({
   timeRef,
   selectedId,
   onSelect,
+  onPick,
+  registerPlanet,
 }: {
   timeRef: React.RefObject<number>
   selectedId: string | null
-  onSelect: (p: Planet) => void
+  onSelect: (p: Planet, point?: [number, number, number], deepZoom?: boolean) => void
+  onPick: (p: Planet, point?: [number, number, number]) => void
+  registerPlanet?: (id: string, obj: THREE.Object3D | null) => void
 }) {
+  const sunRootRef = useRef<THREE.Group>(null)
   const meshRef = useRef<THREE.Mesh>(null)
+  const lastClickTimeRef = useRef(0)
   const isSelected = selectedId === 'sun'
   const { texture: sunTexture } = useAstroModel("sun")
+
+  useEffect(() => {
+    registerPlanet?.('sun', sunRootRef.current)
+    return () => registerPlanet?.('sun', null)
+  }, [registerPlanet])
 
   useFrame(() => {
     if (meshRef.current) {
@@ -543,9 +624,9 @@ function Sun({
   const sunMesh = useMemo(() => createSunMesh({ position: [0, 0, 0], radius: visualSunRadius, color: SUN.color, bodyType: "sun" }, {
     color: "#000000",
     emissive: "#fff8e7",
-    emissiveMap: sunTexture ?? undefined,
+    emissiveMap: sunTexture ?? null,
     emissiveIntensity: 2.5,
-    map: sunTexture ?? undefined,
+    map: sunTexture ?? null,
     roughness: 0.3,
     metalness: 0.1,
     toneMapped: false,
@@ -553,7 +634,7 @@ function Sun({
   }), [sunTexture, visualSunRadius])
 
   return (
-    <group>
+    <group ref={sunRootRef}>
       <mesh scale={1.15}>
         <sphereGeometry args={[sunHaloRadius, 32, 32]} />
         <meshBasicMaterial
@@ -611,7 +692,15 @@ function Sun({
       <mesh
         onPointerDown={(e) => {
           e.stopPropagation()
-          onSelect(SUN)
+          logZoomClick('soleil', e.point as THREE.Vector3, e.camera)
+          const now = performance.now()
+          const isDoubleClick = now - lastClickTimeRef.current < 300
+          lastClickTimeRef.current = now
+          if (isDoubleClick) {
+            onSelect(SUN, undefined, true)
+            return
+          }
+          onPick(SUN, (e.point as THREE.Vector3).toArray() as [number, number, number])
         }}
       >
         <sphereGeometry args={[mapBodySizeToVisual(SUN.radius * 1.5), 8, 8]} />
@@ -627,6 +716,7 @@ function Planet({
   timeRef,
   selectedId,
   onSelect,
+  onPick,
   onCountrySelect,
   selectedMoon,
   onSelectMoon,
@@ -634,32 +724,37 @@ function Planet({
   moonPositionOverride,
   bodyType,
   illuminated,
-  moonIlluminated,
   initialRotationAngle = 0,
   geoLodLevel = 0,
   geoLod1Data = null,
   geoLod2Data = null,
+  registerPlanet,
 }: {
   planet: Planet
   time: number
   timeRef: React.RefObject<number>
   selectedId: string | null
-  onSelect: (p: Planet) => void
+  onSelect: (p: Planet, point?: [number, number, number], deepZoom?: boolean) => void
+  onPick: (p: Planet, point?: [number, number, number], surface?: { latitude: number; longitude: number } | null) => void
   onCountrySelect?: (countryId: string) => void
   selectedMoon: boolean
-  onSelectMoon: () => void
+  onSelectMoon: (point?: [number, number, number]) => void
   positionOverride?: [number, number, number]
   moonPositionOverride?: [number, number, number] | null
   bodyType?: BodyType
   illuminated?: boolean
-  moonIlluminated?: boolean
   initialRotationAngle?: number
   geoLodLevel?: GeoLodLevel
   geoLod1Data?: CountriesAdm0Data | null
   geoLod2Data?: CountriesAdm0Data | null
+  registerPlanet?: (id: string, obj: THREE.Object3D | null) => void
 }) {
+  const rootGroupRef = useRef<THREE.Group>(null)
+  const moonOffsetGroupRef = useRef<THREE.Group>(null)
   const rotationGroupRef = useRef<THREE.Group>(null)
   const moonMeshRef = useRef<THREE.Mesh>(null)
+  const lastClickTimeRef = useRef(0)
+  const moonLastClickTimeRef = useRef(0)
   const isSelected = selectedId === planet.id
 
   const { texture } = useAstroModel(bodyType ?? "earth")
@@ -680,18 +775,56 @@ function Planet({
   })
 
   const visualRadius = mapBodySizeToVisual(planet.radius)
-  const pos = positionOverride ? mapOrbitalPositionToVisual(positionOverride) : getPlanetPosition(planet, time)
+  // Clics pays (GeographicLayer) : on n'active les triangles de picking que quand
+  // la Terre est déjà sélectionnée (mode pays). Sinon ils interceptent le clic
+  // destiné au corps céleste et la sélection de la Terre ne fonctionne plus (V0).
+  const countrySelect = planet.id === 'earth' && isSelected ? onCountrySelect : undefined
+  // Orbital motion: always use the Keplerian model with simulation time for
+  // smooth animation. JPL positionOverride (daily granularity) is not used for
+  // rendering to prevent frozen positions between JPL fetches.
+  const pos = getPlanetPosition(planet, time)
   const moonOffset = planet.id === 'earth'
-    ? moonPositionOverride
-      ? mapOrbitalPositionToVisual(moonPositionOverride, true)
-      : getMoonOffset(time)
+    ? getMoonOffset(time)
     : [0, 0, 0] as [number, number, number]
   const moonData = PLANETS.find(p => p.id === 'moon')!
   const visualMoonRadius = mapBodySizeToVisual(moonData.radius)
   const visualMoonOrbitRadius = mapOrbitalDistanceToVisual(moonData.orbitRadius, true)
 
+  const handleDoubleClickPlanet = (planetId: string) => {
+    if (planetId === planet.id) onSelect(planet, undefined, true)
+  }
+
   const { texture: moonTexture } = useAstroModel("moon")
-  const moonMaterialConfig = useMemo(() => getMaterialConfig("moon"), [])
+  const moonMatRef = useRef<THREE.MeshStandardMaterial>(null)
+
+  // When moonTexture loads asynchronously, the declarative meshStandardMaterial
+  // JSX props update but Three.js may not recompile the shader automatically.
+  // Force needsUpdate so the texture is actually bound on the GPU.
+  useEffect(() => {
+    if (moonMatRef.current && moonTexture) {
+      moonMatRef.current.map = moonTexture
+      moonMatRef.current.needsUpdate = true
+    }
+  }, [moonTexture])
+
+  // Enregistre le groupe racine (position orbital animée) du mesh dans le
+  // registre partagé pour que la caméra puisse suivre la planète réellement
+  // rendue (getWorldPosition), indépendamment de la source de position.
+  useEffect(() => {
+    registerPlanet?.(planet.id, rootGroupRef.current)
+    return () => registerPlanet?.(planet.id, null)
+  }, [registerPlanet, planet.id])
+
+  // La Lune est rendue dans le groupe Terre → enregistrée ici aussi.
+  // Seule la planète Terre rend le groupe de la Lune (moonOffsetGroupRef) :
+  // sur les autres planètes ce ref est null et écrase la vraie position monde
+  // de la Lune dans le registre partagé → plus de repère (getWorldPosition)
+  // pour la caméra, repli sur un trackedPosition recalculé (JPL vs rendu).
+  useEffect(() => {
+    if (planet.id !== 'earth') return
+    registerPlanet?.('moon', moonOffsetGroupRef.current)
+    return () => registerPlanet?.('moon', null)
+  }, [registerPlanet, planet.id])
 
   const gradientColors = useMemo(() => {
     if (planet.id === 'earth') return { c1: '#7dd4f6', c2: planet.color, c3: '#2e7a2c' }
@@ -708,7 +841,7 @@ function Planet({
     emissiveIntensity: 0,
     roughness: materialConfig.roughness,
     metalness: materialConfig.metalness,
-    map: texture ?? undefined,
+    map: texture ?? null,
   }), [gradientColors, materialConfig, texture])
   const planetMesh = useMemo(() => createPlanetMesh({
     position: [0, 0, 0],
@@ -719,7 +852,7 @@ function Planet({
   }, materialProps), [bodyType, materialProps, planet.color, planet.id, visualRadius])
 
   return (
-    <group position={pos}>
+    <group position={pos} ref={rootGroupRef}>
       <group ref={rotationGroupRef}>
         <primitive object={planetMesh} raycast={() => null} />
         {planet.id === 'earth' && <EarthBordersOverlay radius={visualRadius} />}
@@ -727,16 +860,37 @@ function Planet({
             rotation (solidaires texture + spin + suivi orbital). LOD 0
             (earth-borders.png) reste toujours visible = fallback. */}
         {planet.id === 'earth' && geoLod1Data && geoLodLevel >= 1 && (
-          <GeographicLayer earthRadius={visualRadius} data={geoLod1Data} lodLevel={1} onCountrySelect={onCountrySelect} />
+          <GeographicLayer earthRadius={visualRadius} data={geoLod1Data} lodLevel={1} onCountrySelect={countrySelect} />
         )}
         {planet.id === 'earth' && geoLod2Data && geoLodLevel >= 2 && (
-          <GeographicLayer earthRadius={visualRadius} data={geoLod2Data} lodLevel={2} onCountrySelect={onCountrySelect} />
+          <GeographicLayer earthRadius={visualRadius} data={geoLod2Data} lodLevel={2} onCountrySelect={countrySelect} />
         )}
         {/* Invisible hitbox for easier clicking */}
         <mesh
           onPointerDown={(e) => {
             e.stopPropagation()
-            onSelect(planet)
+            logZoomClick(planet.id, e.point as THREE.Vector3, e.camera)
+            const now = performance.now()
+            const isDoubleClick = now - lastClickTimeRef.current < 300
+            lastClickTimeRef.current = now
+            const impact = (e.point as THREE.Vector3).toArray() as [number, number, number]
+            // Clic simple → Picking/Selection uniquement (aucun déplacement caméra).
+            if (!isDoubleClick) {
+              let surface: { latitude: number; longitude: number } | null = null
+              if (planet.id === 'earth' && rotationGroupRef.current) {
+                const earthCenter = new THREE.Vector3()
+                rotationGroupRef.current.getWorldPosition(earthCenter)
+                surface = earthImpactToLatLon(
+                  e.point as THREE.Vector3,
+                  earthCenter,
+                  rotationGroupRef.current.rotation.y,
+                )
+              }
+              onPick(planet, impact, surface)
+              return
+            }
+            // Double-clic → Camera : vol fluide + réduction du rayon d'offset.
+            handleDoubleClickPlanet(planet.id)
           }}
         >
           <sphereGeometry args={[visualRadius * 1.5, 8, 8]} />
@@ -756,7 +910,7 @@ function Planet({
           </mesh>
         )}
         {/* Geographic boundaries (ADM0) inherit the group rotation */}
-        {planet.id === 'earth' && <GeographicLayer earthRadius={visualRadius} onCountrySelect={onCountrySelect} />}
+        {planet.id === 'earth' && <GeographicLayer earthRadius={visualRadius} onCountrySelect={countrySelect} />}
       </group>
       {/* Saturn rings — anneaux 3D réalistes : bandes de transparence, éclairés par la scène */}
       {planet.id === 'saturn' && <SaturnRings radius={visualRadius} />}
@@ -765,27 +919,37 @@ function Planet({
         <>
           {/* Moon orbit trajectory */}
           <OrbitalTrajectory radius={visualMoonOrbitRadius} bodyId="moon" />
-          <group position={moonOffset}>
+          <group position={moonOffset} ref={moonOffsetGroupRef}>
           <group ref={moonMeshRef}>
             <mesh raycast={() => null}>
               <sphereGeometry args={[visualMoonRadius, 16, 16]} />
               <meshStandardMaterial
+                ref={moonMatRef}
                 color={moonTexture ? "#ffffff" : moonData.color}
                 emissive={new THREE.Color(0x000000)}
                 emissiveIntensity={0}
-                roughness={moonIlluminated ? (moonMaterialConfig.roughness) : 0.9}
-                metalness={moonIlluminated ? (moonMaterialConfig.metalness) : 0.05}
-                map={moonTexture ?? undefined}
+                roughness={0.8}
+                metalness={0}
+                map={moonTexture ?? null}
               />
             </mesh>
             <mesh
               onPointerDown={(e) => {
                 e.stopPropagation()
-                onSelectMoon()
+                logZoomClick('lune', e.point as THREE.Vector3, e.camera)
+                const now = performance.now()
+                const isDoubleClick = now - moonLastClickTimeRef.current < 300
+                moonLastClickTimeRef.current = now
+                const impact = (e.point as THREE.Vector3).toArray() as [number, number, number]
+                if (isDoubleClick) {
+                  onSelectMoon(impact)
+                  return
+                }
+                onPick(moonData, impact)
               }}
             >
               <sphereGeometry args={[visualMoonRadius * 2, 8, 8]} />
-              <meshBasicMaterial transparent opacity={0} />
+              <meshBasicMaterial transparent opacity={0} depthWrite={false} />
             </mesh>
             {selectedId === 'moon' && (
               <mesh scale={1.06} raycast={() => null}>
@@ -981,7 +1145,7 @@ function StarField3D({ count = 4000 }: { count?: number }) {
   }, [count])
 
   return (
-    <points>
+    <points raycast={() => null}>
       <bufferGeometry>
         <bufferAttribute
           attach="attributes-position"
@@ -1013,14 +1177,18 @@ function StarField3D({ count = 4000 }: { count?: number }) {
 function SolarSystemScene({
   selectedPlanet,
   onSelectPlanet,
+  onPickPlanet,
   isPlaying,
   timeSpeed,
+  timeDirection,
+  realTimeSyncToken,
   focusTarget,
   trackingTarget,
   trackedPosition,
   isFocusing,
   onTransitionDone,
   controlsRef,
+  targetFocusDistance,
   onTimeUpdate,
   onCountrySelect,
   jplEarthPosition,
@@ -1034,15 +1202,19 @@ function SolarSystemScene({
   jplNeptunePosition,
 }: {
   selectedPlanet: Planet | null
-  onSelectPlanet: (p: Planet) => void
+  onSelectPlanet: (p: Planet, point?: [number, number, number], deepZoom?: boolean) => void
+  onPickPlanet: (p: Planet, point?: [number, number, number], surface?: { latitude: number; longitude: number } | null) => void
   isPlaying: boolean
   timeSpeed: number
+  timeDirection: number
+  realTimeSyncToken: number
   focusTarget: string | null
   trackingTarget: string | null
   trackedPosition: [number, number, number] | null
   isFocusing: boolean
   onTransitionDone: () => void
   controlsRef: React.RefObject<any>
+  targetFocusDistance: number | null
   onTimeUpdate: (t: number) => void
   onCountrySelect: (countryId: string) => void
   jplEarthPosition?: [number, number, number] | null
@@ -1055,7 +1227,16 @@ function SolarSystemScene({
   jplUranusPosition?: [number, number, number] | null
   jplNeptunePosition?: [number, number, number] | null
 }) {
-  const timeRef = useRef(0)
+  const timeRef = useRef(utcToSimulationTime(new Date()))
+
+  // Registre des maillages 3D des corps célestes (id → Object3D rendu). La caméra
+  // lit la POSITION MONDIALE RÉELLE du mesh pour le focus et le suivi 🡆 le point
+  // visé correspond toujours à la planète effectivement rendue, quelle que soit la
+  // source de position (Kepler analytique, JPL…).
+  const planetMeshRegistry = useRef<Record<string, THREE.Object3D | null>>({})
+  const registerPlanetMesh = useCallback((id: string, obj: THREE.Object3D | null) => {
+    planetMeshRegistry.current[id] = obj
+  }, [])
 
   // LOD géographique Terre : niveau dérivé de la distance caméra ↔ Terre
   // (position monde actuelle, compatible mouvement orbital + suivi).
@@ -1078,20 +1259,27 @@ function SolarSystemScene({
     if (isPlaying) {
       // delta est en secondes réelles ; simulationTime est en heures.
       // À ×1 : 1 s réelle = 1/3600 h = 1 s simulée (temps réel).
-      timeRef.current += (delta * timeSpeed) / 3600
+      // timeDirection (⏴/⏵) inverse le sens de l'écoulement du temps.
+      timeRef.current += (delta * timeSpeed * timeDirection) / 3600
     }
     onTimeUpdate(timeRef.current)
   })
 
-  const dynamicJplPositions: Record<string, [number, number, number] | null> = {
-    earth: jplEarthPosition ? getDynamicJplPosition('earth', jplEarthPosition, timeRef.current) : null,
-    mercury: jplMercuryPosition ? getDynamicJplPosition('mercury', jplMercuryPosition, timeRef.current) : null,
-    venus: jplVenusPosition ? getDynamicJplPosition('venus', jplVenusPosition, timeRef.current) : null,
-    mars: jplMarsPosition ? getDynamicJplPosition('mars', jplMarsPosition, timeRef.current) : null,
-    jupiter: jplJupiterPosition ? getDynamicJplPosition('jupiter', jplJupiterPosition, timeRef.current) : null,
-    saturn: jplSaturnPosition ? getDynamicJplPosition('saturn', jplSaturnPosition, timeRef.current) : null,
-    uranus: jplUranusPosition ? getDynamicJplPosition('uranus', jplUranusPosition, timeRef.current) : null,
-    neptune: jplNeptunePosition ? getDynamicJplPosition('neptune', jplNeptunePosition, timeRef.current) : null,
+  // "⟲ REAL TIME" : resynchronise l'horloge simulée sur l'horloge locale.
+  useEffect(() => {
+    if (realTimeSyncToken === 0) return
+    timeRef.current = utcToSimulationTime(new Date())
+  }, [realTimeSyncToken])
+
+  const dynamicJplPositions: Record<string, [number, number, number] | null | undefined> = {
+    earth: jplEarthPosition,
+    mercury: jplMercuryPosition,
+    venus: jplVenusPosition,
+    mars: jplMarsPosition,
+    jupiter: jplJupiterPosition,
+    saturn: jplSaturnPosition,
+    uranus: jplUranusPosition,
+    neptune: jplNeptunePosition,
   }
   const planetPositions: Record<string, [number, number, number]> = { sun: [0, 0, 0] }
   for (const planet of PLANETS) {
@@ -1102,9 +1290,7 @@ function SolarSystemScene({
       : getPlanetPosition(planet, timeRef.current)
   }
   const earthPosition = planetPositions.earth
-  const dynamicJplMoonPosition = jplMoonPosition
-    ? getDynamicJplMoonOffset(jplMoonPosition, timeRef.current)
-    : null
+  const dynamicJplMoonPosition = jplMoonPosition ?? null
   const moonOffset = dynamicJplMoonPosition
     ? mapOrbitalPositionToVisual(dynamicJplMoonPosition, true)
     : getMoonOffset(timeRef.current)
@@ -1119,9 +1305,9 @@ function SolarSystemScene({
     planetPositions,
   )
 
-  const handleSelectMoon = useCallback(() => {
+  const handleSelectMoon = useCallback((point?: [number, number, number]) => {
     const moon = PLANETS.find(p => p.id === 'moon')!
-    onSelectPlanet(moon)
+    onSelectPlanet(moon, point, true)
   }, [onSelectPlanet])
 
   return (
@@ -1140,6 +1326,8 @@ function SolarSystemScene({
         isFocusing={isFocusing}
         onTransitionDone={onTransitionDone}
         controlsRef={controlsRef}
+        targetFocusDistance={targetFocusDistance}
+        meshRegistry={planetMeshRegistry}
         earthPosition={planetPositions.earth}
       />
 
@@ -1166,6 +1354,8 @@ function SolarSystemScene({
         timeRef={timeRef}
         selectedId={selectedPlanet?.id ?? null}
         onSelect={onSelectPlanet}
+        onPick={onPickPlanet}
+        registerPlanet={registerPlanetMesh}
       />
 
       {PLANETS.filter(p => p.id !== 'moon' && p.id !== 'sun').map(p => {
@@ -1178,14 +1368,15 @@ function SolarSystemScene({
               timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
+              onPick={onPickPlanet}
               onCountrySelect={onCountrySelect}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
+              registerPlanet={registerPlanetMesh}
               positionOverride={dynamicJplPositions.earth ?? undefined}
               moonPositionOverride={dynamicJplMoonPosition}
               bodyType="earth"
               illuminated={planetIllumination.earth}
-              moonIlluminated={planetIllumination.moon}
               initialRotationAngle={earthInitialRotationAngle}
               geoLodLevel={geoLodLevel}
               geoLod1Data={geoLod1Data}
@@ -1202,8 +1393,10 @@ function SolarSystemScene({
               timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
+              onPick={onPickPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
+              registerPlanet={registerPlanetMesh}
               positionOverride={dynamicJplPositions.mercury ?? undefined}
               bodyType="mercury"
               illuminated={planetIllumination.mercury}
@@ -1219,8 +1412,10 @@ function SolarSystemScene({
               timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
+              onPick={onPickPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
+              registerPlanet={registerPlanetMesh}
               positionOverride={dynamicJplPositions.venus ?? undefined}
               bodyType="venus"
               illuminated={planetIllumination.venus}
@@ -1236,8 +1431,10 @@ function SolarSystemScene({
               timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
+              onPick={onPickPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
+              registerPlanet={registerPlanetMesh}
               positionOverride={dynamicJplPositions.mars ?? undefined}
               bodyType="mars"
               illuminated={planetIllumination.mars}
@@ -1253,8 +1450,10 @@ function SolarSystemScene({
               timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
+              onPick={onPickPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
+              registerPlanet={registerPlanetMesh}
               positionOverride={dynamicJplPositions.jupiter ?? undefined}
               bodyType="jupiter"
               illuminated={planetIllumination.jupiter}
@@ -1270,8 +1469,10 @@ function SolarSystemScene({
               timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
+              onPick={onPickPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
+              registerPlanet={registerPlanetMesh}
               positionOverride={dynamicJplPositions.saturn ?? undefined}
               bodyType="saturn"
               illuminated={planetIllumination.saturn}
@@ -1287,8 +1488,10 @@ function SolarSystemScene({
               timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
+              onPick={onPickPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
+              registerPlanet={registerPlanetMesh}
               positionOverride={dynamicJplPositions.uranus ?? undefined}
               bodyType="uranus"
               illuminated={planetIllumination.uranus}
@@ -1304,8 +1507,10 @@ function SolarSystemScene({
               timeRef={timeRef}
               selectedId={selectedPlanet?.id ?? null}
               onSelect={onSelectPlanet}
+              onPick={onPickPlanet}
               selectedMoon={selectedPlanet?.id === 'moon'}
               onSelectMoon={handleSelectMoon}
+              registerPlanet={registerPlanetMesh}
               positionOverride={dynamicJplPositions.neptune ?? undefined}
               bodyType="neptune"
               illuminated={planetIllumination.neptune}
@@ -1320,9 +1525,11 @@ function SolarSystemScene({
             timeRef={timeRef}
             selectedId={selectedPlanet?.id ?? null}
             onSelect={onSelectPlanet}
+              onPick={onPickPlanet}
             onCountrySelect={onCountrySelect}
             selectedMoon={selectedPlanet?.id === 'moon'}
             onSelectMoon={handleSelectMoon}
+            registerPlanet={registerPlanetMesh}
             moonPositionOverride={p.id === 'earth' ? dynamicJplMoonPosition : undefined}
             bodyType={p.id as BodyType}
             illuminated={planetIllumination[p.id as keyof typeof planetIllumination]}
@@ -1392,6 +1599,7 @@ function ObjectInfoPanel({
   planetPositions,
   sunDirection,
   subsolarPoint,
+  surfaceLatLon,
   isDetailOpen,
   onDetailToggle,
 }: {
@@ -1403,6 +1611,8 @@ function ObjectInfoPanel({
   planetPositions: Record<string, [number, number, number]>
   sunDirection: THREE.Vector3 | null
   subsolarPoint: { latitude: number; longitude: number } | null
+  /** Coordonnées (lat/lon) du point de surface capturé par le clic simple (Terre). */
+  surfaceLatLon: { latitude: number; longitude: number } | null
   isDetailOpen: boolean
   onDetailToggle: () => void
 }) {
@@ -1564,6 +1774,18 @@ function ObjectInfoPanel({
                 </div>
               </>
             )}
+            {planet.id === 'earth' && surfaceLatLon && (
+              <>
+                <div className="bg-nk-cyan/8 rounded-lg p-2 border border-nk-cyan/18">
+                  <div className="text-[9px] text-nk-cyan/65 uppercase tracking-wider">Picked Lat</div>
+                  <div className="text-[10px] text-stellar font-mono mt-0.5 leading-snug">{surfaceLatLon.latitude.toFixed(2)}°</div>
+                </div>
+                <div className="bg-nk-cyan/8 rounded-lg p-2 border border-nk-cyan/18">
+                  <div className="text-[9px] text-nk-cyan/65 uppercase tracking-wider">Picked Lon</div>
+                  <div className="text-[10px] text-stellar font-mono mt-0.5 leading-snug">{surfaceLatLon.longitude.toFixed(2)}°</div>
+                </div>
+              </>
+            )}
             <div className="bg-white/5 rounded-lg p-2 border border-white/4 col-span-2">
               <div className="text-[9px] text-stellar-dim/45 uppercase tracking-wider">JPL Status</div>
               <div className="text-[10px] text-stellar font-mono mt-0.5 leading-snug">{hasJPL ? 'Active' : 'Fallback (orbital model)'}</div>
@@ -1580,41 +1802,114 @@ function TimeControlBar({
   onToggle,
   speed,
   onSpeedChange,
+  direction,
+  onDirectionChange,
+  onResetRealTime,
   simTime,
 }: {
   isPlaying: boolean
   onToggle: () => void
   speed: number
   onSpeedChange: (v: number) => void
+  direction: number
+  onDirectionChange: (d: number) => void
+  onResetRealTime: () => void
   simTime: number
 }) {
-  const presets = [
-    { v: 0.1, label: '×0.1' },
-    { v: 1, label: '×1' },
-    { v: 5, label: '×5' },
-    { v: 10, label: '×10' },
-  ]
+  // Préréglages 0.1x → 1000x (temps réel = 1x).
+  const presets = [0.1, 1, 10, 100, 1000]
 
-  const utcDate = simulationTimeToUTC(simTime)
-  const localString = formatLocalTime(utcDate)
-  const utcString = formatUTCTime(utcDate)
+  const date = simulationTimeToUTC(simTime)
+  const dateLabel = date
+    .toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })
+    .toUpperCase()
+  const timeLabel = date.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  })
+
+  // Indicateur de vitesse : REAL RATE / PAUSED / n× FASTER / n× SLOWER.
+  const speedLabel = !isPlaying
+    ? 'PAUSED'
+    : speed === 1
+      ? direction === 1 ? 'REAL RATE' : 'REAL RATE · REV'
+      : speed > 1
+        ? `${speed}x FASTER${direction === -1 ? ' · REV' : ''}`
+        : `${Math.round(1 / speed)}x SLOWER${direction === -1 ? ' · REV' : ''}`
+
+  const liveColor = '#00ff88'
 
   return (
-    <GlassPanel className="px-4 py-2.5 flex items-center gap-4 flex-wrap">
-      <div className="text-[10px] font-mono leading-tight flex-shrink-0">
-        <div className="text-nk-cyan/50 uppercase tracking-[0.12em]">Local Time</div>
-        <div className="text-stellar mt-0.5">{localString}</div>
+    <GlassPanel className="px-4 py-2.5 flex items-center gap-3 flex-wrap">
+      {/* Badge LIVE pulsant */}
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <span
+          className="w-2 h-2 rounded-full"
+          style={{
+            background: isPlaying ? liveColor : '#7a9cc4',
+            boxShadow: isPlaying ? `0 0 8px ${liveColor}` : 'none',
+            animation: isPlaying ? 'pulse-live 1.4s ease-in-out infinite' : 'none',
+          }}
+        />
+        <span
+          className="text-[10px] font-mono font-semibold tracking-[0.15em]"
+          style={{ color: isPlaying ? liveColor : '#7a9cc4' }}
+        >
+          {isPlaying ? '● LIVE' : 'PAUSED'}
+        </span>
       </div>
 
       <div className="w-px h-7 bg-white/8 flex-shrink-0" />
 
+      {/* Date lisible + heure 12h */}
+      <div className="leading-tight flex-shrink-0">
+        <div className="text-[10px] font-mono text-nk-cyan/50 uppercase tracking-[0.15em]">
+          {dateLabel}
+        </div>
+        <div className="text-sm font-mono text-stellar mt-0.5 tabular-nums">{timeLabel}</div>
+      </div>
+
+      {/* Indicateur de vitesse brillant */}
       <div className="text-[10px] font-mono leading-tight flex-shrink-0">
-        <div className="text-nk-cyan/50 uppercase tracking-[0.12em]">UTC</div>
-        <div className="text-stellar/70 mt-0.5">{utcString}</div>
+        <div className="text-nk-cyan/50 uppercase tracking-[0.12em]">Rate</div>
+        <div
+          className="mt-0.5 font-semibold"
+          style={{
+            color: isPlaying ? liveColor : '#7a9cc4',
+            textShadow: isPlaying ? '0 0 8px rgba(0,255,136,0.45)' : 'none',
+          }}
+        >
+          {speedLabel}
+        </div>
       </div>
 
       <div className="w-px h-7 bg-white/8 flex-shrink-0" />
 
+      {/* Sens d'écoulement du temps ⏴ / ⏵ */}
+      <div className="flex gap-1 flex-shrink-0">
+        {([
+          { d: -1, label: '⏴', title: 'Reverse time' },
+          { d: 1, label: '⏵', title: 'Forward time' },
+        ] as const).map(({ d, label, title }) => (
+          <button
+            key={d}
+            title={title}
+            aria-label={title}
+            onClick={() => onDirectionChange(d)}
+            className={`w-7 h-7 rounded-md flex items-center justify-center text-[11px] transition-all border ${
+              direction === d
+                ? 'bg-nk-cyan/20 border-nk-cyan/40 text-nk-cyan'
+                : 'glass-light border-white/8 text-stellar-dim hover:text-stellar hover:border-white/18'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Play / Pause */}
       <button
         onClick={onToggle}
         className={`w-8 h-8 rounded-full flex items-center justify-center transition-all flex-shrink-0 ${
@@ -1626,40 +1921,67 @@ function TimeControlBar({
         <span className="text-[11px]">{isPlaying ? '⏸' : '▶'}</span>
       </button>
 
+      {/* Préréglages de vitesse */}
       <div className="flex gap-1">
-        {presets.map(({ v, label }) => (
+        {presets.map((v) => (
           <button
             key={v}
             className={`text-[10px] font-mono px-2 py-1 rounded-md transition-all ${
-              Math.abs(speed - v) < 0.06
+              Math.abs(speed - v) < 1e-6
                 ? 'bg-nk-cyan/20 text-nk-cyan border border-nk-cyan/30'
                 : 'text-stellar-dim hover:text-stellar glass-light border border-white/8 hover:border-white/18'
             }`}
             onClick={() => onSpeedChange(v)}
           >
-            {label}
+            {v}x
           </button>
         ))}
       </div>
+
+      {/* Réinitialisation temps réel */}
+      <button
+        onClick={onResetRealTime}
+        title="Synchroniser sur l'heure locale réelle"
+        className="text-[10px] font-mono px-2.5 py-1 rounded-md transition-all glass-light border border-white/8 text-stellar-dim hover:text-stellar hover:border-white/18 flex-shrink-0"
+      >
+        ⟲ REAL TIME
+      </button>
 
     </GlassPanel>
   )
 }
 
 function PlanetSelector({ selected, onSelect }: { selected: Planet | null; onSelect: (p: Planet) => void }) {
+  const [query, setQuery] = useState('')
+  const normalizedQuery = query.trim().toLowerCase()
+  const results = [SUN, ...PLANETS].filter((p) =>
+    p.name.toLowerCase().includes(normalizedQuery),
+  )
+
   return (
     <GlassPanel className="py-2 px-1.5 flex flex-col gap-0.5">
       <div className="text-[10px] font-mono text-nk-cyan/55 uppercase tracking-[0.15em] px-2 py-1">
         Objects
       </div>
-      {[SUN, ...PLANETS].map((p, i) => (
+      {/* Barre de recherche */}
+      <div className="px-1 pb-1.5">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search…"
+          aria-label="Search celestial objects"
+          className="w-36 text-[11px] font-mono px-2 py-1 rounded-md glass-light border border-white/8 text-stellar placeholder:text-stellar-dim/40 focus:outline-none focus:border-nk-cyan/35 transition-colors"
+        />
+      </div>
+      {results.map((p, i) => (
         <button
           key={p.id}
           className={`flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all w-full text-left border ${
             selected?.id === p.id
               ? 'bg-nk-cyan/12 border-nk-cyan/28 shadow-[0_0_8px_rgba(0,216,255,0.1)]'
               : 'hover:bg-white/5 border-transparent'
-          } ${i === 0 ? 'mb-0.5' : ''}`}
+          } ${i === 0 && p.id === 'sun' ? 'mb-0.5' : ''}`}
           onClick={() => onSelect(p)}
         >
           <div
@@ -1677,6 +1999,9 @@ function PlanetSelector({ selected, onSelect }: { selected: Planet | null; onSel
           )}
         </button>
       ))}
+      {results.length === 0 && (
+        <div className="text-[10px] font-mono text-stellar-dim/40 px-2 py-1.5">No match</div>
+      )}
     </GlassPanel>
   )
 }
@@ -2023,13 +2348,16 @@ function HeroSection() {
 function ExplorerSection() {
   const [selectedPlanet, setSelectedPlanet] = useState<Planet | null>(null)
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null)
+  const [surfaceLatLon, setSurfaceLatLon] = useState<{ latitude: number; longitude: number } | null>(null)
   const [isPlaying, setIsPlaying] = useState(true)
   const [timeSpeed, setTimeSpeed] = useState(1)
+  const [timeDirection, setTimeDirection] = useState(1)
+  const [realTimeSyncToken, setRealTimeSyncToken] = useState(0)
   const [focusTarget, setFocusTarget] = useState<string | null>(null)
   const [trackingTarget, setTrackingTarget] = useState<string | null>(null)
   const [isFocusing, setIsFocusing] = useState(false)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
-  const [simTime, setSimTime] = useState(0)
+  const [simTime, setSimTime] = useState(() => utcToSimulationTime(new Date()))
   // Identifiant du jour simulé (UTC) : les requêtes JPL sont throttlées à la
   // granularité jour pour éviter tout fetch réseau dans la boucle de rendu.
   const jplDayId = simulationTimeToDayId(simTime)
@@ -2043,30 +2371,65 @@ function ExplorerSection() {
   const [jplUranusPosition, setJplUranusPosition] = useState<[number, number, number] | null>(null)
   const [jplNeptunePosition, setJplNeptunePosition] = useState<[number, number, number] | null>(null)
   const controlsRef = useRef<any>(null)
+  const [targetFocusDistance, setTargetFocusDistance] = useState<number | null>(null)
+  const lastFocusedPlanetIdRef = useRef<string | null>(null)
 
-  const handleSelectPlanet = useCallback((p: Planet) => {
-    ;(globalThis as any).__events.push({ t: performance.now(), kind: 'select', id: p.id, sel: p.name })
+  // Double-clic 3D / sélection UI (OBJECTS) : Sélection + Camera + Tracking.
+  const handleSelectPlanet = useCallback((p: Planet, _point?: [number, number, number], deepZoom?: boolean) => {
+    ;(globalThis as any).__events.push({ t: performance.now(), kind: 'select', id: p.id, sel: p.name, deepZoom: !!deepZoom })
     setIsDetailOpen(false)
+    setSurfaceLatLon(null)
     setSelectedPlanet(p)
     setTrackingTarget(p.id)
     setFocusTarget(p.id)
     setIsFocusing(true)
+    if (deepZoom && lastFocusedPlanetIdRef.current === p.id) {
+      const bodyRadius = getBodyVisualRadius(p.id)
+      setTargetFocusDistance(prev => Math.max(bodyRadius * 1.15, (prev ?? bodyRadius * 3.5) * 0.5))
+    } else {
+      const bodyRadius = getBodyVisualRadius(p.id)
+      setTargetFocusDistance(bodyRadius * 3.5)
+    }
+    lastFocusedPlanetIdRef.current = p.id
+  }, [])
+
+  // Clic simple 3D : Picking (point d'impact, lat/lon Terre pour la surface)
+  // + Sélection — sans aucun mouvement de caméra (vol réservé au double-clic).
+  const handlePickPlanet = useCallback((p: Planet, _point?: [number, number, number], surface?: { latitude: number; longitude: number } | null) => {
+    ;(globalThis as any).__events.push({ t: performance.now(), kind: 'pick', id: p.id, sel: p.name })
+    setSelectedPlanet(p)
+    setSurfaceLatLon(surface ?? null)
+  }, [])
+
+  // "⟲ REAL TIME" : retour à la vitesse temps réel, sens avant, sur l'horloge locale.
+  const handleResetRealTime = useCallback(() => {
+    setTimeSpeed(1)
+    setTimeDirection(1)
+    setIsPlaying(true)
+    setRealTimeSyncToken(t => t + 1)
   }, [])
 
   const handleFocus = useCallback(() => {
     ;(globalThis as any).__events.push({ t: performance.now(), kind: 'focus', id: selectedPlanet?.id })
     if (!selectedPlanet) return
+    setTrackingTarget(selectedPlanet.id)
     setFocusTarget(selectedPlanet.id)
     setIsFocusing(true)
+    const bodyRadius = getBodyVisualRadius(selectedPlanet.id)
+    setTargetFocusDistance(bodyRadius * 3.5)
+    lastFocusedPlanetIdRef.current = selectedPlanet.id
   }, [selectedPlanet])
 
   const handleDeselectPlanet = useCallback(() => {
     ;(globalThis as any).__events.push({ t: performance.now(), kind: 'deselect' })
     setSelectedPlanet(null)
     setSelectedCountry(null)
+    setSurfaceLatLon(null)
     setTrackingTarget(null)
     setFocusTarget(null)
     setIsFocusing(false)
+    setTargetFocusDistance(null)
+    lastFocusedPlanetIdRef.current = null
   }, [])
 
   const handleCountrySelect = useCallback((countryId: string) => {
@@ -2081,27 +2444,27 @@ function ExplorerSection() {
 
   // TEMP-DIAG: expose selection for headless repro
   if (!(globalThis as any).__events) (globalThis as any).__events = []
-  ;(globalThis as any).__select = (id: string) => {
+  ;(globalThis as any).__select = (id: string, deepZoom?: boolean) => {
     const p = PLANETS.find(x => x.id === id) ?? (id === 'sun' ? SUN : null)
-    if (p) handleSelectPlanet(p)
-    return `selected:${id}`
+    if (p) handleSelectPlanet(p, undefined, deepZoom)
+    return `selected:${id}${deepZoom ? ':deep' : ''}`
   }
   ;(globalThis as any).__deselect = () => {
     handleDeselectPlanet()
     return 'deselected'
   }
+  ;(globalThis as any).__setSpeed = (s: number) => {
+    setTimeSpeed(Math.max(0, s))
+    if (s > 0) setIsPlaying(true)
+    else setIsPlaying(false)
+    return `speed:${s}`
+  }
 
-  // Focus automatique : la sélection initiale et le bouton manuel
-  // pilotent déjà l'état de focus. On ne relance pas un focus sur
-  // chaque fin de transition si la cible sélectionnée est déjà la bonne.
-  useEffect(() => {
-    if (!selectedPlanet) return
-    if (isFocusing) return
-    if (focusTarget === selectedPlanet.id) return
-
-    setFocusTarget(selectedPlanet.id)
-    setIsFocusing(true)
-  }, [selectedPlanet, focusTarget, isFocusing])
+  // Focus caméra piloté exclusivement par les actions explicites :
+  //   • double-clic 3D            → `handleSelectPlanet`
+  //   • bouton Focus du panneau   → `handleFocus`
+  //   • menu OBJECTS / recherche  → `handleSelectPlanet`
+  // Le clic simple ne déclenche AUCUN focus (il ne fait que sélectionner).
 
   // Fetch JPL Earth position when simulated DATE changes (throttled to 1 fetch per day)
   useEffect(() => {
@@ -2110,12 +2473,10 @@ function ExplorerSection() {
         const provider = new JPLProvider()
         const state = await provider.getState('earth', simTime)
         if (state && state.position) {
-          const converted: [number, number, number] = [
-            state.position[0] * 55,
-            state.position[1] * 55,
-            state.position[2] * 55,
-          ]
+          const converted = convertJplToScenePosition(state.position, 'earth')
           setJplEarthPosition(converted)
+        } else {
+          setJplEarthPosition(null)
         }
       } catch (e) {
         setJplEarthPosition(null)
@@ -2130,8 +2491,9 @@ function ExplorerSection() {
         const provider = new JPLProvider()
         const state = await provider.getState('moon', simTime)
         if (state && state.position) {
-          // JPL Moon (ID 301) renvoie position en unités géocentriques (relative à la Terre)
-          setJplMoonPosition([state.position[0], state.position[1], state.position[2]])
+          // JPL Moon (ID 301) est demandé au proxy avec CENTER='500@399' (géocentrique),
+          // donc le vecteur est Terre → Lune, déjà en unités orbitales après conversion.
+          setJplMoonPosition(convertJplToScenePosition(state.position, 'moon'))
         } else {
           setJplMoonPosition(null)
         }
@@ -2157,29 +2519,22 @@ function ExplorerSection() {
       ]
       const results = await Promise.all(promises)
 
-      if (results[0] && results[0].position) {
-        setJplMercuryPosition([results[0].position[0] * 55, results[0].position[1] * 55, results[0].position[2] * 55])
-      }
-      if (results[1] && results[1].position) {
-        setJplVenusPosition([results[1].position[0] * 55, results[1].position[1] * 55, results[1].position[2] * 55])
-      }
-      if (results[2] && results[2].position) {
-        setJplEarthPosition([results[2].position[0] * 55, results[2].position[1] * 55, results[2].position[2] * 55])
-      }
-      if (results[3] && results[3].position) {
-        setJplMarsPosition([results[3].position[0] * 55, results[3].position[1] * 55, results[3].position[2] * 55])
-      }
-      if (results[4] && results[4].position) {
-        setJplJupiterPosition([results[4].position[0] * 55, results[4].position[1] * 55, results[4].position[2] * 55])
-      }
-      if (results[5] && results[5].position) {
-        setJplSaturnPosition([results[5].position[0] * 55, results[5].position[1] * 55, results[5].position[2] * 55])
-      }
-      if (results[6] && results[6].position) {
-        setJplUranusPosition([results[6].position[0] * 55, results[6].position[1] * 55, results[6].position[2] * 55])
-      }
-      if (results[7] && results[7].position) {
-        setJplNeptunePosition([results[7].position[0] * 55, results[7].position[1] * 55, results[7].position[2] * 55])
+      const setters: Array<[string, (v: [number, number, number]) => void]> = [
+        ['mercury', setJplMercuryPosition],
+        ['venus', setJplVenusPosition],
+        ['earth', setJplEarthPosition],
+        ['mars', setJplMarsPosition],
+        ['jupiter', setJplJupiterPosition],
+        ['saturn', setJplSaturnPosition],
+        ['uranus', setJplUranusPosition],
+        ['neptune', setJplNeptunePosition],
+      ]
+      for (let i = 0; i < setters.length; i++) {
+        const [bodyId, setter] = setters[i]
+        const state = results[i]
+        if (state && state.position) {
+          setter(convertJplToScenePosition(state.position, bodyId))
+        }
       }
     })()
   }, [jplDayId])
@@ -2199,19 +2554,13 @@ function ExplorerSection() {
     for (const planet of PLANETS) {
       if (planet.id === 'sun' || planet.id === 'moon') continue
       const jplPos = jplPositionsMap[planet.id]
-      const dynamicJplPos = jplPos
-        ? getDynamicJplPosition(planet.id, jplPos, simTime)
-        : null
-      positions[planet.id] = dynamicJplPos
-        ? mapOrbitalPositionToVisual(dynamicJplPos)
+      positions[planet.id] = jplPos
+        ? mapOrbitalPositionToVisual(jplPos)
         : getPlanetPosition(planet, simTime)
     }
     const earthPos = positions.earth
-    const dynamicJplMoonOffset = jplMoonPosition
-      ? getDynamicJplMoonOffset(jplMoonPosition, simTime)
-      : null
-    const moonOffset = dynamicJplMoonOffset
-      ? mapOrbitalPositionToVisual(dynamicJplMoonOffset, true)
+    const moonOffset = jplMoonPosition
+      ? mapOrbitalPositionToVisual(jplMoonPosition, true)
       : getMoonOffset(simTime)
     positions.moon = [
       earthPos[0] + moonOffset[0],
@@ -2249,14 +2598,18 @@ function ExplorerSection() {
           <SolarSystemScene
             selectedPlanet={selectedPlanet}
             onSelectPlanet={handleSelectPlanet}
+            onPickPlanet={handlePickPlanet}
             isPlaying={isPlaying}
             timeSpeed={timeSpeed}
+            timeDirection={timeDirection}
+            realTimeSyncToken={realTimeSyncToken}
             focusTarget={focusTarget}
             trackingTarget={trackingTarget}
             trackedPosition={planetPositions[trackingTarget ?? focusTarget ?? ''] ?? null}
             isFocusing={isFocusing}
             onTransitionDone={handleTransitionDone}
             controlsRef={controlsRef}
+            targetFocusDistance={targetFocusDistance}
             onTimeUpdate={setSimTime}
             onCountrySelect={handleCountrySelect}
             jplEarthPosition={jplEarthPosition}
@@ -2296,41 +2649,41 @@ function ExplorerSection() {
           <DiscoveryHint visible={!selectedPlanet} />
         </div>
 
-        {/* Right sidebar — panels grouped for responsive layout */}
-        <div
-          className={`absolute top-16 right-4 pointer-events-auto flex flex-col gap-3 transition-all duration-350 lg:flex-row lg:items-start ${
-            selectedPlanet ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-4 pointer-events-none'
-          }`}
-        >
-          <ObjectInfoPanel
-            planet={selectedPlanet}
-            onClose={handleDeselectPlanet}
-            onFocus={handleFocus}
-            simTime={simTime}
-            jplPositions={{
-              earth: jplEarthPosition,
-              mercury: jplMercuryPosition,
-              venus: jplVenusPosition,
-              mars: jplMarsPosition,
-              jupiter: jplJupiterPosition,
-              saturn: jplSaturnPosition,
-              uranus: jplUranusPosition,
-              neptune: jplNeptunePosition,
-              moon: jplMoonPosition,
-            }}
-            planetPositions={planetPositions}
-            sunDirection={sunDirection}
-            subsolarPoint={selectedPlanet?.id === 'earth' ? subsolarPoint : null}
-            isDetailOpen={isDetailOpen}
-            onDetailToggle={() => setIsDetailOpen(prev => !prev)}
-          />
-          <div className="hidden sm:block">
-            <CoordinateDisplay selectedPlanet={selectedPlanet} time={simTime} />
-          </div>
-        </div>
-
-        <div className="absolute top-1/2 -translate-y-1/2 right-4 pointer-events-auto hidden lg:block">
+        {/* Right sidebar — stacked column so PlanetSelector and info panel never overlap */}
+        <div className="absolute top-16 right-4 pointer-events-auto flex flex-col gap-3 hidden lg:flex">
           <PlanetSelector selected={selectedPlanet} onSelect={handleSelectPlanet} />
+          <div
+            className={`transition-all duration-350 ${
+              selectedPlanet ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-4 pointer-events-none'
+            }`}
+          >
+            <ObjectInfoPanel
+              planet={selectedPlanet}
+              onClose={handleDeselectPlanet}
+              onFocus={handleFocus}
+              simTime={simTime}
+              jplPositions={{
+                earth: jplEarthPosition,
+                mercury: jplMercuryPosition,
+                venus: jplVenusPosition,
+                mars: jplMarsPosition,
+                jupiter: jplJupiterPosition,
+                saturn: jplSaturnPosition,
+                uranus: jplUranusPosition,
+                neptune: jplNeptunePosition,
+                moon: jplMoonPosition,
+              }}
+              planetPositions={planetPositions}
+              sunDirection={sunDirection}
+              subsolarPoint={selectedPlanet?.id === 'earth' ? subsolarPoint : null}
+              surfaceLatLon={selectedPlanet?.id === 'earth' ? surfaceLatLon : null}
+              isDetailOpen={isDetailOpen}
+              onDetailToggle={() => setIsDetailOpen(prev => !prev)}
+            />
+            <div className="hidden sm:block mt-3">
+              <CoordinateDisplay selectedPlanet={selectedPlanet} time={simTime} />
+            </div>
+          </div>
         </div>
 
         <div className="absolute bottom-10 left-1/2 -translate-x-1/2 pointer-events-auto">
@@ -2339,6 +2692,9 @@ function ExplorerSection() {
             onToggle={() => setIsPlaying(p => !p)}
             speed={timeSpeed}
             onSpeedChange={setTimeSpeed}
+            direction={timeDirection}
+            onDirectionChange={setTimeDirection}
+            onResetRealTime={handleResetRealTime}
             simTime={simTime}
           />
         </div>
@@ -2353,7 +2709,7 @@ function ExplorerSection() {
                 <button
                   key={p.id}
                   className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-white/5 transition-all"
-                  onClick={() => handleSelectPlanet(p)}
+                    onClick={() => handleSelectPlanet(p)}
                 >
                   <div className="rounded-full w-2 h-2 flex-shrink-0" style={{ background: p.color }} />
                   <span className="text-[10px] font-mono text-stellar-dim">{p.name}</span>
