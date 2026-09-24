@@ -19,7 +19,7 @@ import {
   disposeOrbitTrajectory,
   type BodyType,
   getPlanetMaterialConfig,
-  calculateInitialEarthRotationAngle,
+  calculateEarthSolarRotationY,
   getBodyOrbitalElements,
   simulationTimeToUTC,
   calculateSubsolarPoint,
@@ -767,7 +767,9 @@ function Planet({
 
   useFrame(() => {
     if (rotationGroupRef.current) {
-      rotationGroupRef.current.rotation.y = getRotationAngle(timeRef.current, planet.rotationPeriod ?? 0, initialRotationAngle)
+      rotationGroupRef.current.rotation.y = planet.id === 'earth'
+        ? calculateEarthSolarRotationY(timeRef.current, getPlanetPosition(planet, timeRef.current))
+        : getRotationAngle(timeRef.current, planet.rotationPeriod ?? 0, initialRotationAngle)
     }
     if (moonMeshRef.current) {
       moonMeshRef.current.rotation.y = getRotationAngle(timeRef.current, moonData.rotationPeriod ?? 0)
@@ -1248,13 +1250,6 @@ function SolarSystemScene({
   }, [])
   const earthVisualRadius = mapBodySizeToVisual(2.8)
 
-  const earthInitialRotationAngle = useMemo(() => {
-    const earthAtEpoch = jplEarthPosition
-      ? mapOrbitalPositionToVisual(jplEarthPosition)
-      : mapOrbitalPositionToVisual(getBodyPosition(ORBITAL_BODY_BY_ID.get('earth')!, 0))
-    return calculateInitialEarthRotationAngle(earthAtEpoch)
-  }, [jplEarthPosition])
-
   useFrame((_, delta) => {
     if (isPlaying) {
       // delta est en secondes réelles ; simulationTime est en heures.
@@ -1377,7 +1372,6 @@ function SolarSystemScene({
               moonPositionOverride={dynamicJplMoonPosition}
               bodyType="earth"
               illuminated={planetIllumination.earth}
-              initialRotationAngle={earthInitialRotationAngle}
               geoLodLevel={geoLodLevel}
               geoLod1Data={geoLod1Data}
               geoLod2Data={geoLod2Data}

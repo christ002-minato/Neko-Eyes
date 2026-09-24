@@ -109,23 +109,19 @@ export function calculateEarthRotationAngle(simulationTime: number): number {
   return (simulationTime / SIDEREAL_DAY_HOURS) * Math.PI * 2
 }
 
+/** Align the geographic subsolar meridian with the Sun's rendered world azimuth. */
+export function calculateEarthSolarRotationY(
+  simulationTime: number,
+  earthPosition: [number, number, number],
+): number {
+  const sunDirection = new THREE.Vector3(-earthPosition[0], -earthPosition[1], -earthPosition[2]).normalize()
+  const sunAzimuth = Math.atan2(sunDirection.z, sunDirection.x)
+  const subsolarLongitude = calculateSubsolarPoint(simulationTime, earthPosition)?.longitude ?? 0
+  return -THREE.MathUtils.degToRad(subsolarLongitude) - sunAzimuth
+}
+
 export function calculateInitialEarthRotationAngle(earthPositionAtEpoch: [number, number, number]): number {
-  const sunDir = new THREE.Vector3(-earthPositionAtEpoch[0], -earthPositionAtEpoch[1], -earthPositionAtEpoch[2]).normalize()
-  const sunDirAngle = Math.atan2(sunDir.z, sunDir.x)
-
-  const jd = simulationTimeToJulianDate(0)
-  const { dec, ra } = calculateSunDeclinationRightAscension(jd)
-  const gmst = calculateGMST(jd)
-
-  const subsolarLon = - (gmst - (ra / 180) * Math.PI)
-  let subsolarLonDeg = (subsolarLon / Math.PI) * 180
-  while (subsolarLonDeg > 180) subsolarLonDeg -= 360
-  while (subsolarLonDeg <= -180) subsolarLonDeg += 360
-
-  const subsolarLonRad = (subsolarLonDeg / 180) * Math.PI
-  const initialAngle = -subsolarLonRad - sunDirAngle
-
-  return initialAngle
+  return calculateEarthSolarRotationY(0, earthPositionAtEpoch)
 }
 
 export function getAstronomicalTime(simulationTime: number, earthPosition: [number, number, number]): AstronomicalTime {
